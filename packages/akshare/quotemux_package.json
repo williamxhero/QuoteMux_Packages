@@ -93,10 +93,10 @@
   "secret_fields": [],
   "supports_multi_instance": true,
   "handler_targets": {
-    "get_index_members": "markethub_packages.akshare.source:get_index_members",
-    "get_index_quotes": "markethub_packages.akshare.source:get_index_quotes",
-    "get_stock_quotes": "markethub_packages.akshare.source:get_stock_quotes",
-    "get_trading_calendar": "markethub_packages.akshare.source:get_trading_calendar"
+    "get_index_members": "quotemux_packages.akshare.source:get_index_members",
+    "get_index_quotes": "quotemux_packages.akshare.source:get_index_quotes",
+    "get_stock_quotes": "quotemux_packages.akshare.source:get_stock_quotes",
+    "get_trading_calendar": "quotemux_packages.akshare.source:get_trading_calendar"
   },
   "origin": "builtin",
   "package_root": ""

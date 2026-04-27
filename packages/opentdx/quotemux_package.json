@@ -45,7 +45,7 @@
   "secret_fields": [],
   "supports_multi_instance": true,
   "handler_targets": {
-    "get_stock_quotes": "markethub_packages.opentdx.source:get_stock_quotes"
+    "get_stock_quotes": "quotemux_packages.opentdx.source:get_stock_quotes"
   },
   "origin": "builtin",
   "package_root": ""
