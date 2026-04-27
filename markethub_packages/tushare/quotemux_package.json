@@ -1,0 +1,644 @@
+{
+  "package_id": "tushare",
+  "version": "2026.4.23",
+  "source_name": "tushare",
+  "display_name": "Tushare",
+  "description": "Tushare 数据源。",
+  "capabilities": [
+    {
+      "capability_id": "boards.catalog",
+      "support_level": "native",
+      "handler_name": "get_board_catalog",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "boards.indicators.money_flow",
+      "support_level": "native",
+      "handler_name": "get_board_money_flow",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "boards.indicators.money_flow.snapshot",
+      "support_level": "native",
+      "handler_name": "get_board_daily_money_flow_snapshot",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "boards.members",
+      "support_level": "native",
+      "handler_name": "get_board_members",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "boards.members.history",
+      "support_level": "native",
+      "handler_name": "get_board_member_history",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "boards.profile",
+      "support_level": "native",
+      "handler_name": "get_board_profile",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "boards.quotes.daily",
+      "support_level": "native",
+      "handler_name": "get_board_quotes",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "boards.reference.categories",
+      "support_level": "native",
+      "handler_name": "get_board_categories",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "indexes.catalog",
+      "support_level": "native",
+      "handler_name": "get_index_catalog",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "indexes.members",
+      "support_level": "native",
+      "handler_name": "get_index_members",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "indexes.profile",
+      "support_level": "native",
+      "handler_name": "get_index_profile",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "indexes.quotes.daily",
+      "support_level": "native",
+      "handler_name": "get_index_quotes",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.calendar.trading",
+      "support_level": "native",
+      "handler_name": "get_trading_calendar",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.calendar.trading.next",
+      "support_level": "native",
+      "handler_name": "get_trading_calendar",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.calendar.trading.previous",
+      "support_level": "native",
+      "handler_name": "get_trading_calendar",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.calendar.trading.yearly",
+      "support_level": "native",
+      "handler_name": "get_trading_calendar",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.connect.active_top10",
+      "support_level": "native",
+      "handler_name": "get_connect_active_top10",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.connect.capital_flow",
+      "support_level": "native",
+      "handler_name": "get_connect_capital_flow",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.connect.quotas",
+      "support_level": "native",
+      "handler_name": "get_connect_quotas",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.events.block_trades",
+      "support_level": "native",
+      "handler_name": "get_block_trades",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.indicators.main_capital_flow",
+      "support_level": "native",
+      "handler_name": "get_market_capital_flow",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.participants.dragon_tiger",
+      "support_level": "native",
+      "handler_name": "get_dragon_tiger",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.participants.dragon_tiger.institutions",
+      "support_level": "native",
+      "handler_name": "get_dragon_tiger_institutions",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.participants.hot_money",
+      "support_level": "native",
+      "handler_name": "get_hot_money_profiles",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.participants.hot_money.details",
+      "support_level": "native",
+      "handler_name": "get_hot_money_details",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.trading.open_auctions",
+      "support_level": "native",
+      "handler_name": "get_market_open_auctions",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.trading.sessions",
+      "support_level": "native",
+      "handler_name": "get_market_sessions",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "rankings.research.broker_monthly_picks",
+      "support_level": "native",
+      "handler_name": "get_rank_broker_monthly_picks",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "rankings.research.reports",
+      "support_level": "native",
+      "handler_name": "get_rank_research_reports",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.catalog",
+      "support_level": "native",
+      "handler_name": "get_stock_catalog",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.catalog.archive",
+      "support_level": "native",
+      "handler_name": "get_stock_archive",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.corporate_actions.dividends",
+      "support_level": "native",
+      "handler_name": "get_dividends",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.corporate_actions.repurchases",
+      "support_level": "native",
+      "handler_name": "get_repurchases",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.corporate_actions.rights_issues",
+      "support_level": "native",
+      "handler_name": "get_rights_issues",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.corporate_actions.share_changes",
+      "support_level": "native",
+      "handler_name": "get_share_changes",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.corporate_actions.unlock_schedules",
+      "support_level": "native",
+      "handler_name": "get_unlock_schedules",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.factors.adj",
+      "support_level": "native",
+      "handler_name": "get_adj_factors",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.factors.technical",
+      "support_level": "native",
+      "handler_name": "get_technical_factors",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.finance.audits",
+      "support_level": "native",
+      "handler_name": "get_audits",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.finance.disclosure_dates",
+      "support_level": "native",
+      "handler_name": "get_disclosure_dates",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.finance.express",
+      "support_level": "native",
+      "handler_name": "get_express",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.finance.forecasts",
+      "support_level": "native",
+      "handler_name": "get_forecasts",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.finance.indicators",
+      "support_level": "native",
+      "handler_name": "get_stock_finance_indicators",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.finance.main_business",
+      "support_level": "native",
+      "handler_name": "get_main_business",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.finance.statements",
+      "support_level": "native",
+      "handler_name": "get_stock_financial_statements",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.indicators.ah_comparisons",
+      "support_level": "native",
+      "handler_name": "get_stock_ah_comparisons",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.indicators.chip_distribution",
+      "support_level": "native",
+      "handler_name": "get_chip_distribution",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.indicators.chip_performance",
+      "support_level": "native",
+      "handler_name": "get_chip_performance",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.indicators.daily_basic",
+      "support_level": "native",
+      "handler_name": "get_stock_daily_basic",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.indicators.daily_market_value",
+      "support_level": "native",
+      "handler_name": "get_stock_daily_market_value",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.indicators.daily_valuation",
+      "support_level": "native",
+      "handler_name": "get_stock_daily_valuation",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.indicators.money_flow",
+      "support_level": "native",
+      "handler_name": "get_stock_money_flow",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.indicators.premarket",
+      "support_level": "native",
+      "handler_name": "get_premarket",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.indicators.risk_flags",
+      "support_level": "native",
+      "handler_name": "get_stock_risk_flags",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.ownership.ccass_holding_details",
+      "support_level": "native",
+      "handler_name": "get_ccass_holding_details",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.ownership.ccass_holdings",
+      "support_level": "native",
+      "handler_name": "get_ccass_holdings",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.ownership.hk_connect_holdings",
+      "support_level": "native",
+      "handler_name": "get_hk_connect_holdings",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.ownership.pledges.details",
+      "support_level": "native",
+      "handler_name": "get_pledge_details",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.ownership.pledges.stats",
+      "support_level": "native",
+      "handler_name": "get_pledge_stats",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.ownership.shareholders.changes",
+      "support_level": "native",
+      "handler_name": "get_shareholder_changes",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.ownership.shareholders.count",
+      "support_level": "native",
+      "handler_name": "get_shareholder_count",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.ownership.shareholders.top10",
+      "support_level": "native",
+      "handler_name": "get_shareholder_top10",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.ownership.shareholders.top10_float",
+      "support_level": "native",
+      "handler_name": "get_shareholder_top10",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.profile.basic",
+      "support_level": "native",
+      "handler_name": "get_stock_basic",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.profile.company",
+      "support_level": "native",
+      "handler_name": "get_company_profile",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.profile.management_rewards",
+      "support_level": "native",
+      "handler_name": "get_management_rewards",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.profile.managers",
+      "support_level": "native",
+      "handler_name": "get_managers",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.profile.name_history",
+      "support_level": "native",
+      "handler_name": "get_stock_name_history",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.quotes.auctions",
+      "support_level": "native",
+      "handler_name": "get_auctions",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.quotes.daily",
+      "support_level": "native",
+      "handler_name": "get_stock_quotes",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.quotes.daily_snapshot",
+      "support_level": "native",
+      "handler_name": "get_stock_daily_snapshot_full",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.reference.bse_code_mappings",
+      "support_level": "native",
+      "handler_name": "get_bse_code_mappings",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.reference.hk_connect_targets",
+      "support_level": "native",
+      "handler_name": "get_hk_connect_targets",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.research.reports",
+      "support_level": "native",
+      "handler_name": "get_research_reports",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.research.surveys",
+      "support_level": "native",
+      "handler_name": "get_surveys",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.signals.nine_turn",
+      "support_level": "native",
+      "handler_name": "get_nine_turn",
+      "mergeable": true,
+      "notes": ""
+    }
+  ],
+  "capability_tags": [
+    "provider",
+    "http",
+    "tushare"
+  ],
+  "config_schema": [
+    {
+      "name": "token",
+      "field_type": "string",
+      "title": "Tushare Token",
+      "description": "Tushare API token",
+      "required": true,
+      "default_value": ""
+    },
+    {
+      "name": "timeout_seconds",
+      "field_type": "string",
+      "title": "瓒呮椂绉掓暟",
+      "description": "Tushare 璇锋眰瓒呮椂绉掓暟",
+      "required": false,
+      "default_value": "15"
+    }
+  ],
+  "secret_fields": [
+    "token"
+  ],
+  "supports_multi_instance": true,
+  "handler_targets": {
+    "get_adj_factors": "markethub_packages.tushare.source:get_adj_factors",
+    "get_auctions": "markethub_packages.tushare.source:get_auctions",
+    "get_audits": "markethub_packages.tushare.source:get_audits",
+    "get_block_trades": "markethub_packages.tushare.source:get_block_trades",
+    "get_board_catalog": "markethub_packages.tushare.source:get_board_catalog",
+    "get_board_categories": "markethub_packages.tushare.source:get_board_categories",
+    "get_board_daily_money_flow_snapshot": "markethub_packages.tushare.source:get_board_daily_money_flow_snapshot",
+    "get_board_member_history": "markethub_packages.tushare.source:get_board_member_history",
+    "get_board_members": "markethub_packages.tushare.source:get_board_members",
+    "get_board_money_flow": "markethub_packages.tushare.source:get_board_money_flow",
+    "get_board_profile": "markethub_packages.tushare.source:get_board_profile",
+    "get_board_quotes": "markethub_packages.tushare.source:get_board_quotes",
+    "get_bse_code_mappings": "markethub_packages.tushare.source:get_bse_code_mappings",
+    "get_ccass_holding_details": "markethub_packages.tushare.source:get_ccass_holding_details",
+    "get_ccass_holdings": "markethub_packages.tushare.source:get_ccass_holdings",
+    "get_chip_distribution": "markethub_packages.tushare.source:get_chip_distribution",
+    "get_chip_performance": "markethub_packages.tushare.source:get_chip_performance",
+    "get_company_profile": "markethub_packages.tushare.source:get_company_profile",
+    "get_connect_active_top10": "markethub_packages.tushare.source:get_connect_active_top10",
+    "get_connect_capital_flow": "markethub_packages.tushare.source:get_connect_capital_flow",
+    "get_connect_quotas": "markethub_packages.tushare.source:get_connect_quotas",
+    "get_disclosure_dates": "markethub_packages.tushare.source:get_disclosure_dates",
+    "get_dividends": "markethub_packages.tushare.source:get_dividends",
+    "get_dragon_tiger": "markethub_packages.tushare.source:get_dragon_tiger",
+    "get_dragon_tiger_institutions": "markethub_packages.tushare.source:get_dragon_tiger_institutions",
+    "get_express": "markethub_packages.tushare.source:get_express",
+    "get_forecasts": "markethub_packages.tushare.source:get_forecasts",
+    "get_hk_connect_holdings": "markethub_packages.tushare.source:get_hk_connect_holdings",
+    "get_hk_connect_targets": "markethub_packages.tushare.source:get_hk_connect_targets",
+    "get_hot_money_details": "markethub_packages.tushare.source:get_hot_money_details",
+    "get_hot_money_profiles": "markethub_packages.tushare.source:get_hot_money_profiles",
+    "get_index_catalog": "markethub_packages.tushare.source:get_index_catalog",
+    "get_index_members": "markethub_packages.tushare.source:get_index_members",
+    "get_index_quotes": "markethub_packages.tushare.source:get_index_quotes",
+    "get_main_business": "markethub_packages.tushare.source:get_main_business",
+    "get_market_capital_flow": "markethub_packages.tushare.source:get_market_capital_flow",
+    "get_market_open_auctions": "markethub_packages.tushare.source:get_market_open_auctions",
+    "get_management_rewards": "markethub_packages.tushare.source:get_management_rewards",
+    "get_managers": "markethub_packages.tushare.source:get_managers",
+    "get_market_sessions": "markethub_packages.tushare.source:get_market_sessions",
+    "get_nine_turn": "markethub_packages.tushare.source:get_nine_turn",
+    "get_pledge_details": "markethub_packages.tushare.source:get_pledge_details",
+    "get_pledge_stats": "markethub_packages.tushare.source:get_pledge_stats",
+    "get_premarket": "markethub_packages.tushare.source:get_premarket",
+    "get_rank_broker_monthly_picks": "markethub_packages.tushare.source:get_rank_broker_monthly_picks",
+    "get_rank_research_reports": "markethub_packages.tushare.source:get_rank_research_reports",
+    "get_repurchases": "markethub_packages.tushare.source:get_repurchases",
+    "get_research_reports": "markethub_packages.tushare.source:get_research_reports",
+    "get_rights_issues": "markethub_packages.tushare.source:get_rights_issues",
+    "get_share_changes": "markethub_packages.tushare.source:get_share_changes",
+    "get_shareholder_changes": "markethub_packages.tushare.source:get_shareholder_changes",
+    "get_shareholder_count": "markethub_packages.tushare.source:get_shareholder_count",
+    "get_shareholder_top10": "markethub_packages.tushare.source:get_shareholder_top10",
+    "get_stock_ah_comparisons": "markethub_packages.tushare.source:get_stock_ah_comparisons",
+    "get_stock_archive": "markethub_packages.tushare.source:get_stock_archive",
+    "get_stock_basic": "markethub_packages.tushare.source:get_stock_basic",
+    "get_stock_catalog": "markethub_packages.tushare.source:get_stock_catalog",
+    "get_stock_daily_basic": "markethub_packages.tushare.source:get_stock_daily_basic",
+    "get_stock_daily_market_value": "markethub_packages.tushare.source:get_stock_daily_market_value",
+    "get_stock_daily_snapshot": "markethub_packages.tushare.source:get_stock_daily_snapshot",
+    "get_stock_daily_snapshot_full": "markethub_packages.tushare.source:get_stock_daily_snapshot_full",
+    "get_stock_daily_valuation": "markethub_packages.tushare.source:get_stock_daily_valuation",
+    "get_stock_financial_statements": "markethub_packages.tushare.source:get_stock_financial_statements",
+    "get_stock_finance_indicators": "markethub_packages.tushare.source:get_stock_finance_indicators",
+    "get_stock_money_flow": "markethub_packages.tushare.source:get_stock_money_flow",
+    "get_stock_name_history": "markethub_packages.tushare.source:get_stock_name_history",
+    "get_stock_quotes": "markethub_packages.tushare.source:get_stock_quotes",
+    "get_stock_risk_flags": "markethub_packages.tushare.source:get_stock_risk_flags",
+    "get_surveys": "markethub_packages.tushare.source:get_surveys",
+    "get_technical_factors": "markethub_packages.tushare.source:get_technical_factors",
+    "get_trading_calendar": "markethub_packages.tushare.source:get_trading_calendar",
+    "get_unlock_schedules": "markethub_packages.tushare.source:get_unlock_schedules"
+  },
+  "origin": "builtin",
+  "package_root": ""
+}

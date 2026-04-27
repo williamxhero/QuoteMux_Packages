@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "markethub-packages"
+version = "0.1.0"
+description = "MarketHub source packages"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.setuptools]
+packages = ["markethub_packages", "markethub_packages.akshare", "markethub_packages.efinance", "markethub_packages.mootdx", "markethub_packages.opentdx", "markethub_packages.tushare"]
+
+[tool.setuptools.package-data]
+markethub_packages = ["py.typed"]
+"markethub_packages.akshare" = ["quotemux_package.json"]
+"markethub_packages.efinance" = ["quotemux_package.json"]
+"markethub_packages.mootdx" = ["quotemux_package.json"]
+"markethub_packages.opentdx" = ["quotemux_package.json"]
+"markethub_packages.tushare" = ["quotemux_package.json"]

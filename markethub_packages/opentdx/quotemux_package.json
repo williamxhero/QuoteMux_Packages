@@ -1,0 +1,52 @@
+{
+  "package_id": "opentdx",
+  "version": "2026.4.23",
+  "source_name": "opentdx",
+  "display_name": "OpenTDX",
+  "description": "OpenTDX 数据源。",
+  "capabilities": [
+    {
+      "capability_id": "stocks.quotes.intraday",
+      "support_level": "native",
+      "handler_name": "get_stock_quotes",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "stocks.signals.hl",
+      "support_level": "native",
+      "handler_name": "get_stock_quotes",
+      "mergeable": true,
+      "notes": ""
+    }
+  ],
+  "capability_tags": [
+    "provider",
+    "socket"
+  ],
+  "config_schema": [
+    {
+      "name": "host",
+      "field_type": "string",
+      "title": "涓绘満",
+      "description": "OpenTDX 涓绘満",
+      "required": false,
+      "default_value": ""
+    },
+    {
+      "name": "port",
+      "field_type": "string",
+      "title": "绔彛",
+      "description": "OpenTDX 绔彛",
+      "required": false,
+      "default_value": ""
+    }
+  ],
+  "secret_fields": [],
+  "supports_multi_instance": true,
+  "handler_targets": {
+    "get_stock_quotes": "markethub_packages.opentdx.source:get_stock_quotes"
+  },
+  "origin": "builtin",
+  "package_root": ""
+}
