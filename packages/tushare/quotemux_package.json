@@ -555,8 +555,8 @@
     {
       "name": "timeout_seconds",
       "field_type": "string",
-      "title": "瓒呮椂绉掓暟",
-      "description": "Tushare 璇锋眰瓒呮椂绉掓暟",
+      "title": "超时秒数",
+      "description": "Tushare 请求超时秒数",
       "required": false,
       "default_value": "15"
     }

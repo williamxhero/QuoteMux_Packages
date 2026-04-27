@@ -28,16 +28,16 @@
     {
       "name": "host",
       "field_type": "string",
-      "title": "涓绘満",
-      "description": "OpenTDX 涓绘満",
+      "title": "主机",
+      "description": "OpenTDX 主机",
       "required": false,
       "default_value": ""
     },
     {
       "name": "port",
       "field_type": "string",
-      "title": "绔彛",
-      "description": "OpenTDX 绔彛",
+      "title": "端口",
+      "description": "OpenTDX 端口",
       "required": false,
       "default_value": ""
     }

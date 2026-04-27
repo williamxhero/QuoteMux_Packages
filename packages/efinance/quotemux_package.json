@@ -1,9 +1,9 @@
 {
-  "package_id": "akshare",
+  "package_id": "efinance",
   "version": "2026.4.23",
-  "source_name": "akshare",
-  "display_name": "AKShare",
-  "description": "AKShare 数据源。",
+  "source_name": "efinance",
+  "display_name": "EFinance",
+  "description": "EFinance 数据源。",
   "capabilities": [
     {
       "capability_id": "indexes.members",
@@ -16,34 +16,6 @@
       "capability_id": "indexes.quotes.daily",
       "support_level": "native",
       "handler_name": "get_index_quotes",
-      "mergeable": true,
-      "notes": ""
-    },
-    {
-      "capability_id": "markets.calendar.trading",
-      "support_level": "native",
-      "handler_name": "get_trading_calendar",
-      "mergeable": true,
-      "notes": ""
-    },
-    {
-      "capability_id": "markets.calendar.trading.next",
-      "support_level": "native",
-      "handler_name": "get_trading_calendar",
-      "mergeable": true,
-      "notes": ""
-    },
-    {
-      "capability_id": "markets.calendar.trading.previous",
-      "support_level": "native",
-      "handler_name": "get_trading_calendar",
-      "mergeable": true,
-      "notes": ""
-    },
-    {
-      "capability_id": "markets.calendar.trading.yearly",
-      "support_level": "native",
-      "handler_name": "get_trading_calendar",
       "mergeable": true,
       "notes": ""
     },
@@ -84,8 +56,8 @@
     {
       "name": "timeout_seconds",
       "field_type": "string",
-      "title": "瓒呮椂绉掓暟",
-      "description": "HTTP 璇锋眰瓒呮椂绉掓暟",
+      "title": "超时秒数",
+      "description": "HTTP 请求超时秒数",
       "required": false,
       "default_value": "15"
     }
@@ -93,10 +65,9 @@
   "secret_fields": [],
   "supports_multi_instance": true,
   "handler_targets": {
-    "get_index_members": "markethub_packages.akshare.source:get_index_members",
-    "get_index_quotes": "markethub_packages.akshare.source:get_index_quotes",
-    "get_stock_quotes": "markethub_packages.akshare.source:get_stock_quotes",
-    "get_trading_calendar": "markethub_packages.akshare.source:get_trading_calendar"
+    "get_index_members": "markethub_packages.efinance.source:get_index_members",
+    "get_index_quotes": "markethub_packages.efinance.source:get_index_quotes",
+    "get_stock_quotes": "markethub_packages.efinance.source:get_stock_quotes"
   },
   "origin": "builtin",
   "package_root": ""

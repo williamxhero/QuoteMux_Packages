@@ -1,9 +1,9 @@
 {
-  "package_id": "mootdx",
+  "package_id": "akshare",
   "version": "2026.4.23",
-  "source_name": "mootdx",
-  "display_name": "Mootdx",
-  "description": "Mootdx 数据源。",
+  "source_name": "akshare",
+  "display_name": "AKShare",
+  "description": "AKShare 数据源。",
   "capabilities": [
     {
       "capability_id": "indexes.members",
@@ -16,6 +16,34 @@
       "capability_id": "indexes.quotes.daily",
       "support_level": "native",
       "handler_name": "get_index_quotes",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.calendar.trading",
+      "support_level": "native",
+      "handler_name": "get_trading_calendar",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.calendar.trading.next",
+      "support_level": "native",
+      "handler_name": "get_trading_calendar",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.calendar.trading.previous",
+      "support_level": "native",
+      "handler_name": "get_trading_calendar",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
+      "capability_id": "markets.calendar.trading.yearly",
+      "support_level": "native",
+      "handler_name": "get_trading_calendar",
       "mergeable": true,
       "notes": ""
     },
@@ -50,32 +78,25 @@
   ],
   "capability_tags": [
     "provider",
-    "socket"
+    "http"
   ],
   "config_schema": [
     {
-      "name": "host",
+      "name": "timeout_seconds",
       "field_type": "string",
-      "title": "涓绘満",
-      "description": "OpenTDX 涓绘満",
+      "title": "超时秒数",
+      "description": "HTTP 请求超时秒数",
       "required": false,
-      "default_value": ""
-    },
-    {
-      "name": "port",
-      "field_type": "string",
-      "title": "绔彛",
-      "description": "OpenTDX 绔彛",
-      "required": false,
-      "default_value": ""
+      "default_value": "15"
     }
   ],
   "secret_fields": [],
   "supports_multi_instance": true,
   "handler_targets": {
-    "get_index_members": "markethub_packages.mootdx.source:get_index_members",
-    "get_index_quotes": "markethub_packages.mootdx.source:get_index_quotes",
-    "get_stock_quotes": "markethub_packages.mootdx.source:get_stock_quotes"
+    "get_index_members": "markethub_packages.akshare.source:get_index_members",
+    "get_index_quotes": "markethub_packages.akshare.source:get_index_quotes",
+    "get_stock_quotes": "markethub_packages.akshare.source:get_stock_quotes",
+    "get_trading_calendar": "markethub_packages.akshare.source:get_trading_calendar"
   },
   "origin": "builtin",
   "package_root": ""

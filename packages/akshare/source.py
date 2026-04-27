@@ -78,13 +78,13 @@ def _fetch_stock_daily_frame(code: str, freq: str, start_dt: datetime, end_dt: d
     if result is None or result.empty:
         return pd.DataFrame()
     work = result.copy()
-    work["code"] = work["鑲＄エ浠ｇ爜"].astype(str).str.zfill(6)
-    work["trade_time"] = pd.to_datetime(work["鏃ユ湡"], errors="coerce")
+    work["code"] = work["股票代码"].astype(str).str.zfill(6)
+    work["trade_time"] = pd.to_datetime(work["日期"], errors="coerce")
     work["freq"] = freq
     work["open"] = pd.to_numeric(work["开盘"], errors="coerce")
     work["high"] = pd.to_numeric(work["最高"], errors="coerce")
     work["low"] = pd.to_numeric(work["最低"], errors="coerce")
-    work["close"] = pd.to_numeric(work["鏀剁洏"], errors="coerce")
+    work["close"] = pd.to_numeric(work["收盘"], errors="coerce")
     work["volume"] = pd.to_numeric(work["成交量"], errors="coerce")
     work["amount"] = pd.to_numeric(work["成交额"], errors="coerce")
     work = work[["code", "trade_time", "freq", "open", "high", "low", "close", "volume", "amount"]]
@@ -107,12 +107,12 @@ def _fetch_stock_intraday_frame(code: str, freq: str, start_dt: datetime, end_dt
         return pd.DataFrame()
     work = result.copy()
     work["code"] = normalize_stock_code(code)
-    work["trade_time"] = pd.to_datetime(work["鏃堕棿"], errors="coerce")
+    work["trade_time"] = pd.to_datetime(work["时间"], errors="coerce")
     work["freq"] = freq
     work["open"] = pd.to_numeric(work["开盘"], errors="coerce")
     work["high"] = pd.to_numeric(work["最高"], errors="coerce")
     work["low"] = pd.to_numeric(work["最低"], errors="coerce")
-    work["close"] = pd.to_numeric(work["鏀剁洏"], errors="coerce")
+    work["close"] = pd.to_numeric(work["收盘"], errors="coerce")
     work["volume"] = pd.to_numeric(work["成交量"], errors="coerce")
     work["amount"] = pd.to_numeric(work["成交额"], errors="coerce")
     work = work[["code", "trade_time", "freq", "open", "high", "low", "close", "volume", "amount"]]
@@ -269,8 +269,8 @@ def get_index_members(index_code: str, trade_date: str) -> list[IndexMemberItem]
     if result is None or result.empty:
         return []
     work = result.copy()
-    work["code"] = work["鍝佺浠ｇ爜"].astype(str).str.zfill(6)
-    work["name"] = work["鍝佺鍚嶇О"].fillna("").astype(str)
+    work["code"] = work["品种代码"].astype(str).str.zfill(6)
+    work["name"] = work["品种名称"].fillna("").astype(str)
     items: list[IndexMemberItem] = []
     for _, row in work.iterrows():
         items.append(
