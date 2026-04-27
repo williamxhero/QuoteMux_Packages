@@ -5,8 +5,8 @@ import pandas as pd
 from quotemux.infra.cache.store import filter_frame_by_date_range
 from platform_models import AuctionItem, BlockTradeItem, ConnectActiveTop10Item, ConnectCapitalFlowItem, ConnectQuotaItem, DragonTigerInstitutionItem, DragonTigerItem, HotMoneyDetailItem, HotMoneyProfileItem
 from quotemux.infra.common import normalize_stock_code, split_csv, stock_code_to_ts
-from quotemux.infra.tushare.helpers import normalize_date_range, plan_days, query_frame, read_cached_once, read_cached_ranges
-from markethub_packages.tushare.stocks import get_auctions
+from .helpers import normalize_date_range, plan_days, query_frame, read_cached_once, read_cached_ranges
+from .stocks import get_auctions
 
 
 def _fetch_connect_flow_frame(start_value: str, end_value: str) -> pd.DataFrame:

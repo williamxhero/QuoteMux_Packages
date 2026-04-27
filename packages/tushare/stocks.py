@@ -8,7 +8,7 @@ import pandas as pd
 from quotemux.infra.cache.store import build_cache_path, filter_frame_by_date_range, merge_cache_frame, read_cache_frame, write_cache_frame
 from platform_models import AuctionItem, BSECodeMappingItem, HKConnectTargetItem, ManagementRewardItem, NineTurnItem, RankingBrokerPickItem, RankingResearchReportItem, ResearchReportItem, StockAHComparisonItem, StockArchiveItem, StockDailyBasicItem, StockDailyMarketValueItem, StockDailyValuationItem, StockFinanceIndicatorItem, StockManagerItem, StockPremarketItem, StockProfileItem, StockRiskFlagItem, SurveyItem
 from quotemux.infra.common import format_date_value, normalize_stock_code, split_csv, stock_code_to_ts
-from quotemux.infra.tushare.helpers import normalize_date_range, normalize_period_range, plan_days, query_frame, read_cached_once, read_cached_ranges
+from .helpers import normalize_date_range, normalize_period_range, plan_days, query_frame, read_cached_once, read_cached_ranges
 
 
 _DAILY_MARKET_LOCKS: dict[str, threading.Lock] = {}

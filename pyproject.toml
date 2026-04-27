@@ -3,14 +3,15 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "markethub-packages"
+name = "quotemux-packages"
 version = "0.1.0"
-description = "MarketHub source packages"
+description = "QuoteMux source packages"
 requires-python = ">=3.12"
 dependencies = []
 
 [tool.setuptools]
 packages = ["markethub_packages", "markethub_packages.akshare", "markethub_packages.efinance", "markethub_packages.mootdx", "markethub_packages.opentdx", "markethub_packages.tushare"]
+package-dir = {"markethub_packages" = "packages"}
 
 [tool.setuptools.package-data]
 markethub_packages = ["py.typed"]

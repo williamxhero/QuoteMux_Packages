@@ -5,7 +5,7 @@ import pandas as pd
 from quotemux.infra.cache.store import filter_frame_by_date_range
 from platform_models import AuditItem, DisclosureDateItem, DividendItem, ExpressItem, ForecastItem, MainBusinessItem, RepurchaseItem, RightsIssueItem, ShareChangeItem, UnlockScheduleItem
 from quotemux.infra.common import normalize_stock_code, stock_code_to_ts
-from quotemux.infra.tushare.helpers import normalize_date_range, normalize_period_range, query_frame, read_cached_ranges
+from .helpers import normalize_date_range, normalize_period_range, query_frame, read_cached_ranges
 
 
 def _fetch_dividend_frame(code: str, _: str, __: str) -> pd.DataFrame:
