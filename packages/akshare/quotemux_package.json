@@ -1,10 +1,59 @@
 {
   "package_id": "akshare",
-  "version": "2026.4.23",
+  "version": "2026.4.30",
   "source_name": "akshare",
   "display_name": "AKShare",
   "description": "AKShare 数据源。",
   "capabilities": [
+    {
+      "capability_id": "boards.catalog",
+      "support_level": "native",
+      "handler_name": "get_board_catalog",
+      "mergeable": true,
+      "notes": "东方财富概念板块与行业板块目录"
+    },
+    {
+      "capability_id": "boards.indicators.money_flow",
+      "support_level": "partial",
+      "handler_name": "get_board_money_flow",
+      "mergeable": true,
+      "notes": "当前稳定覆盖行业板块历史主力净流入，概念板块历史资金流暂不覆盖"
+    },
+    {
+      "capability_id": "boards.indicators.money_flow.snapshot",
+      "support_level": "native",
+      "handler_name": "get_board_daily_money_flow_snapshot",
+      "mergeable": true,
+      "notes": "同花顺概念/行业板块即时资金流快照"
+    },
+    {
+      "capability_id": "boards.members",
+      "support_level": "native",
+      "handler_name": "get_board_members",
+      "mergeable": true,
+      "notes": "东方财富概念/行业板块当前成分"
+    },
+    {
+      "capability_id": "boards.profile",
+      "support_level": "derived",
+      "handler_name": "get_board_profile",
+      "mergeable": true,
+      "notes": "基于板块目录派生单板块 profile"
+    },
+    {
+      "capability_id": "boards.quotes.daily",
+      "support_level": "native",
+      "handler_name": "get_board_quotes",
+      "mergeable": true,
+      "notes": "东方财富概念/行业板块日线、周线、月线"
+    },
+    {
+      "capability_id": "boards.reference.categories",
+      "support_level": "derived",
+      "handler_name": "get_board_categories",
+      "mergeable": true,
+      "notes": "基于概念/行业板块目录派生固定分类"
+    },
     {
       "capability_id": "indexes.members",
       "support_level": "native",
@@ -21,31 +70,220 @@
     },
     {
       "capability_id": "markets.calendar.trading",
-      "support_level": "native",
+      "support_level": "partial",
       "handler_name": "get_trading_calendar",
       "mergeable": true,
-      "notes": ""
+      "notes": "接口只返回开市日，闭市日需要由 QuoteMux 派生"
     },
     {
       "capability_id": "markets.calendar.trading.next",
-      "support_level": "native",
+      "support_level": "derived",
       "handler_name": "get_trading_calendar",
       "mergeable": true,
-      "notes": ""
+      "notes": "基于开市日列表派生"
     },
     {
       "capability_id": "markets.calendar.trading.previous",
-      "support_level": "native",
+      "support_level": "derived",
       "handler_name": "get_trading_calendar",
       "mergeable": true,
-      "notes": ""
+      "notes": "基于开市日列表派生"
     },
     {
       "capability_id": "markets.calendar.trading.yearly",
-      "support_level": "native",
+      "support_level": "derived",
       "handler_name": "get_trading_calendar",
       "mergeable": true,
-      "notes": ""
+      "notes": "基于开市日列表派生年度窗口"
+    },
+    {
+      "capability_id": "markets.connect.capital_flow",
+      "support_level": "native",
+      "handler_name": "get_connect_capital_flow",
+      "mergeable": true,
+      "notes": "东方财富沪深港通历史资金流"
+    },
+    {
+      "capability_id": "markets.events.block_trades",
+      "support_level": "native",
+      "handler_name": "get_block_trades",
+      "mergeable": true,
+      "notes": "东方财富大宗交易每日明细"
+    },
+    {
+      "capability_id": "markets.indicators.main_capital_flow",
+      "support_level": "native",
+      "handler_name": "get_market_capital_flow",
+      "mergeable": true,
+      "notes": "东方财富大盘资金流"
+    },
+    {
+      "capability_id": "markets.participants.dragon_tiger",
+      "support_level": "native",
+      "handler_name": "get_dragon_tiger",
+      "mergeable": true,
+      "notes": "东方财富龙虎榜详情"
+    },
+    {
+      "capability_id": "markets.participants.dragon_tiger.institutions",
+      "support_level": "native",
+      "handler_name": "get_dragon_tiger_institutions",
+      "mergeable": true,
+      "notes": "东方财富机构买卖每日统计"
+    },
+    {
+      "capability_id": "stocks.corporate_actions.dividends",
+      "support_level": "native",
+      "handler_name": "get_dividends",
+      "mergeable": true,
+      "notes": "巨潮资讯个股历史分红"
+    },
+    {
+      "capability_id": "stocks.corporate_actions.repurchases",
+      "support_level": "native",
+      "handler_name": "get_repurchases",
+      "mergeable": true,
+      "notes": "东方财富股票回购数据"
+    },
+    {
+      "capability_id": "stocks.corporate_actions.rights_issues",
+      "support_level": "native",
+      "handler_name": "get_rights_issues",
+      "mergeable": true,
+      "notes": "巨潮资讯个股配股实施方案"
+    },
+    {
+      "capability_id": "stocks.corporate_actions.share_changes",
+      "support_level": "native",
+      "handler_name": "get_share_changes",
+      "mergeable": true,
+      "notes": "东方财富股本结构变动"
+    },
+    {
+      "capability_id": "stocks.corporate_actions.unlock_schedules",
+      "support_level": "native",
+      "handler_name": "get_unlock_schedules",
+      "mergeable": true,
+      "notes": "东方财富个股限售解禁批次"
+    },
+    {
+      "capability_id": "stocks.indicators.money_flow",
+      "support_level": "partial",
+      "handler_name": "get_stock_money_flow",
+      "mergeable": true,
+      "notes": "东方财富个股历史资金流，稳定映射主力净流入"
+    },
+    {
+      "capability_id": "stocks.finance.disclosure_dates",
+      "support_level": "partial",
+      "handler_name": "get_disclosure_dates",
+      "mergeable": true,
+      "notes": "巨潮资讯预约披露，稳定映射计划和实际披露日期，变更原因为空"
+    },
+    {
+      "capability_id": "stocks.finance.express",
+      "support_level": "native",
+      "handler_name": "get_express",
+      "mergeable": true,
+      "notes": "东方财富业绩快报"
+    },
+    {
+      "capability_id": "stocks.finance.forecasts",
+      "support_level": "partial",
+      "handler_name": "get_forecasts",
+      "mergeable": true,
+      "notes": "东方财富业绩预告，预测区间字段按单值映射"
+    },
+    {
+      "capability_id": "stocks.finance.indicators",
+      "support_level": "partial",
+      "handler_name": "get_stock_finance_indicators",
+      "mergeable": true,
+      "notes": "东方财富主要财务指标，按可稳定列名映射"
+    },
+    {
+      "capability_id": "stocks.finance.main_business",
+      "support_level": "native",
+      "handler_name": "get_main_business",
+      "mergeable": true,
+      "notes": "东方财富主营构成"
+    },
+    {
+      "capability_id": "stocks.finance.statements",
+      "support_level": "partial",
+      "handler_name": "get_stock_financial_statements",
+      "mergeable": true,
+      "notes": "东方财富三大财务报表，按现有模型字段映射核心科目"
+    },
+    {
+      "capability_id": "stocks.ownership.hk_connect_holdings",
+      "support_level": "native",
+      "handler_name": "get_hk_connect_holdings",
+      "mergeable": true,
+      "notes": "东方财富沪深港通持股，稳定映射持股数量、持股比例和今日增持股数"
+    },
+    {
+      "capability_id": "stocks.ownership.pledges.details",
+      "support_level": "partial",
+      "handler_name": "get_pledge_details",
+      "mergeable": true,
+      "notes": "东方财富重要股东股权质押明细，缺少解押状态和结束日期"
+    },
+    {
+      "capability_id": "stocks.ownership.pledges.stats",
+      "support_level": "partial",
+      "handler_name": "get_pledge_stats",
+      "mergeable": true,
+      "notes": "东方财富上市公司质押比例，按指定日期查询"
+    },
+    {
+      "capability_id": "stocks.ownership.shareholders.changes",
+      "support_level": "derived",
+      "handler_name": "get_shareholder_changes",
+      "mergeable": true,
+      "notes": "基于东方财富股东户数详情差分派生"
+    },
+    {
+      "capability_id": "stocks.ownership.shareholders.count",
+      "support_level": "native",
+      "handler_name": "get_shareholder_count",
+      "mergeable": true,
+      "notes": "东方财富股东户数详情"
+    },
+    {
+      "capability_id": "stocks.ownership.shareholders.top10",
+      "support_level": "native",
+      "handler_name": "get_shareholder_top10",
+      "mergeable": true,
+      "notes": "东方财富十大股东，需要报告期"
+    },
+    {
+      "capability_id": "stocks.ownership.shareholders.top10_float",
+      "support_level": "native",
+      "handler_name": "get_shareholder_top10",
+      "mergeable": true,
+      "notes": "东方财富十大流通股东，需要报告期"
+    },
+    {
+      "capability_id": "stocks.profile.company",
+      "support_level": "partial",
+      "handler_name": "get_company_profile",
+      "mergeable": true,
+      "notes": "巨潮资讯公司概况，经理和员工数无稳定字段"
+    },
+    {
+      "capability_id": "stocks.research.reports",
+      "support_level": "partial",
+      "handler_name": "get_research_reports",
+      "mergeable": true,
+      "notes": "东方财富个股研报，分析师和目标价不稳定映射"
+    },
+    {
+      "capability_id": "stocks.research.surveys",
+      "support_level": "partial",
+      "handler_name": "get_surveys",
+      "mergeable": true,
+      "notes": "东方财富机构调研明细"
     },
     {
       "capability_id": "stocks.quotes.daily",
@@ -56,10 +294,10 @@
     },
     {
       "capability_id": "stocks.quotes.daily_snapshot",
-      "support_level": "native",
-      "handler_name": "get_stock_quotes",
+      "support_level": "partial",
+      "handler_name": "get_stock_daily_snapshot_full",
       "mergeable": true,
-      "notes": ""
+      "notes": "使用实时全市场快照，仅覆盖当前日期"
     },
     {
       "capability_id": "stocks.quotes.intraday",
@@ -70,10 +308,10 @@
     },
     {
       "capability_id": "stocks.signals.hl",
-      "support_level": "native",
+      "support_level": "derived",
       "handler_name": "get_stock_quotes",
       "mergeable": true,
-      "notes": ""
+      "notes": "由 QuoteMux 基于 1m 行情派生"
     }
   ],
   "capability_tags": [
@@ -93,10 +331,44 @@
   "secret_fields": [],
   "supports_multi_instance": true,
   "handler_targets": {
+    "get_board_catalog": "quotemux_packages.akshare.source:get_board_catalog",
+    "get_board_categories": "quotemux_packages.akshare.source:get_board_categories",
+    "get_board_daily_money_flow_snapshot": "quotemux_packages.akshare.source:get_board_daily_money_flow_snapshot",
+    "get_board_members": "quotemux_packages.akshare.source:get_board_members",
+    "get_board_money_flow": "quotemux_packages.akshare.source:get_board_money_flow",
+    "get_board_profile": "quotemux_packages.akshare.source:get_board_profile",
+    "get_board_quotes": "quotemux_packages.akshare.source:get_board_quotes",
+    "get_block_trades": "quotemux_packages.akshare.source:get_block_trades",
+    "get_company_profile": "quotemux_packages.akshare.source:get_company_profile",
+    "get_connect_capital_flow": "quotemux_packages.akshare.source:get_connect_capital_flow",
+    "get_disclosure_dates": "quotemux_packages.akshare.source:get_disclosure_dates",
+    "get_dividends": "quotemux_packages.akshare.source:get_dividends",
+    "get_dragon_tiger": "quotemux_packages.akshare.source:get_dragon_tiger",
+    "get_dragon_tiger_institutions": "quotemux_packages.akshare.source:get_dragon_tiger_institutions",
+    "get_express": "quotemux_packages.akshare.source:get_express",
+    "get_forecasts": "quotemux_packages.akshare.source:get_forecasts",
+    "get_hk_connect_holdings": "quotemux_packages.akshare.source:get_hk_connect_holdings",
     "get_index_members": "quotemux_packages.akshare.source:get_index_members",
     "get_index_quotes": "quotemux_packages.akshare.source:get_index_quotes",
+    "get_main_business": "quotemux_packages.akshare.source:get_main_business",
+    "get_market_capital_flow": "quotemux_packages.akshare.source:get_market_capital_flow",
+    "get_pledge_details": "quotemux_packages.akshare.source:get_pledge_details",
+    "get_pledge_stats": "quotemux_packages.akshare.source:get_pledge_stats",
+    "get_research_reports": "quotemux_packages.akshare.source:get_research_reports",
+    "get_repurchases": "quotemux_packages.akshare.source:get_repurchases",
+    "get_rights_issues": "quotemux_packages.akshare.source:get_rights_issues",
+    "get_share_changes": "quotemux_packages.akshare.source:get_share_changes",
+    "get_shareholder_changes": "quotemux_packages.akshare.source:get_shareholder_changes",
+    "get_shareholder_count": "quotemux_packages.akshare.source:get_shareholder_count",
+    "get_shareholder_top10": "quotemux_packages.akshare.source:get_shareholder_top10",
+    "get_stock_daily_snapshot_full": "quotemux_packages.akshare.source:get_stock_daily_snapshot_full",
+    "get_stock_finance_indicators": "quotemux_packages.akshare.source:get_stock_finance_indicators",
+    "get_stock_financial_statements": "quotemux_packages.akshare.source:get_stock_financial_statements",
+    "get_stock_money_flow": "quotemux_packages.akshare.source:get_stock_money_flow",
     "get_stock_quotes": "quotemux_packages.akshare.source:get_stock_quotes",
-    "get_trading_calendar": "quotemux_packages.akshare.source:get_trading_calendar"
+    "get_surveys": "quotemux_packages.akshare.source:get_surveys",
+    "get_trading_calendar": "quotemux_packages.akshare.source:get_trading_calendar",
+    "get_unlock_schedules": "quotemux_packages.akshare.source:get_unlock_schedules"
   },
   "origin": "builtin",
   "package_root": ""

@@ -6,9 +6,9 @@ from functools import lru_cache
 import pandas as pd
 
 from quotemux.infra.cache.store import build_cache_path, filter_frame_by_datetime_range, latest_n_rows, merge_cache_frame, read_cache_frame, write_cache_frame
-from quotemux.infra.common import INTRADAY_RULES, add_quote_metrics, aggregate_ohlc, build_time_bounds, format_datetime_value, normalize_stock_code
+from quotemux.infra.common import INTRADAY_RULES, add_quote_metrics, aggregate_ohlc, build_time_bounds, format_datetime_value, normalize_index_code, normalize_stock_code
 from quotemux.infra.provider_runtime.core import call_provider_api
-from platform_models import StockQuoteItem
+from platform_models import IndexQuoteItem, StockQuoteItem
 
 try:
     from opentdx import ADJUST, MARKET, PERIOD, TdxClient
@@ -21,6 +21,7 @@ except Exception:
 
 DEFAULT_LOOKBACK_DAYS = 10
 MINUTES_PER_TRADE_DAY = 242
+DAILY_FREQS = {"1d", "1w", "1mo"}
 
 
 def _is_available() -> bool:
@@ -41,6 +42,15 @@ def _market_from_code(code: str):
     return MARKET.SZ
 
 
+def _market_from_index_code(index_code: str):
+    normalized = normalize_index_code(index_code)
+    if normalized.startswith("399"):
+        return MARKET.SZ
+    if normalized.startswith("8"):
+        return MARKET.BJ
+    return MARKET.SH
+
+
 def _adjust_from_text(adjust: str):
     if adjust == "qfq":
         return ADJUST.QFQ
@@ -49,9 +59,22 @@ def _adjust_from_text(adjust: str):
     return ADJUST.NONE
 
 
+def _period_from_freq(freq: str):
+    if freq == "1w":
+        return PERIOD.WEEKLY
+    if freq == "1mo":
+        return PERIOD.MONTHLY
+    return PERIOD.DAILY
+
+
 def _estimate_bar_count(start_dt: datetime, end_dt: datetime) -> int:
     span_days = max(1, (end_dt.date() - start_dt.date()).days + 1)
     return min(60000, max(MINUTES_PER_TRADE_DAY, span_days * MINUTES_PER_TRADE_DAY))
+
+
+def _estimate_daily_count(start_dt: datetime, end_dt: datetime) -> int:
+    span_days = max(1, (end_dt.date() - start_dt.date()).days + 1)
+    return min(8000, max(260, span_days + 30))
 
 
 @lru_cache(maxsize=1)
@@ -111,6 +134,90 @@ def _fetch_stock_intraday_frame(code: str, start_dt: datetime, end_dt: datetime,
     return out.sort_values("trade_time").reset_index(drop=True)
 
 
+def _fetch_stock_daily_frame(code: str, freq: str, start_dt: datetime, end_dt: datetime, adjust: str) -> pd.DataFrame:
+    normalized = normalize_stock_code(code)
+    records = _call_tdx(
+        "stock_kline",
+        lambda client, market, stock_code, period, bar_count, adjust_value: client.stock_kline(
+            market,
+            stock_code,
+            period,
+            start=0,
+            count=bar_count,
+            times=1,
+            adjust=adjust_value,
+        ),
+        _market_from_code(normalized),
+        normalized,
+        _period_from_freq(freq),
+        _estimate_daily_count(start_dt, end_dt),
+        _adjust_from_text(adjust),
+    )
+    if not records:
+        return pd.DataFrame()
+    out = pd.DataFrame(records)
+    if out.empty:
+        return out
+    out["code"] = normalized
+    time_column = "date_time" if "date_time" in out.columns else "datetime"
+    out["trade_time"] = pd.to_datetime(out[time_column], errors="coerce")
+    out["freq"] = freq
+    out["adjust"] = adjust
+    out["open"] = pd.to_numeric(out["open"], errors="coerce")
+    out["high"] = pd.to_numeric(out["high"], errors="coerce")
+    out["low"] = pd.to_numeric(out["low"], errors="coerce")
+    out["close"] = pd.to_numeric(out["close"], errors="coerce")
+    out["volume"] = pd.to_numeric(out["vol"], errors="coerce")
+    out["amount"] = pd.to_numeric(out["amount"], errors="coerce")
+    out = out[["code", "trade_time", "freq", "open", "high", "low", "close", "volume", "amount", "adjust"]]
+    out = out.dropna(subset=["trade_time"])
+    out = add_quote_metrics(out)
+    out = filter_frame_by_datetime_range(out, "trade_time", start_dt, end_dt)
+    out = out.drop_duplicates(subset=["code", "trade_time", "freq"], keep="last")
+    return out.sort_values("trade_time").reset_index(drop=True)
+
+
+def _fetch_index_daily_frame(index_code: str, freq: str, start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
+    normalized = normalize_index_code(index_code)
+    records = _call_tdx(
+        "index_kline",
+        lambda client, market, current_code, period, bar_count: client.stock_kline(
+            market,
+            current_code,
+            period,
+            start=0,
+            count=bar_count,
+            times=1,
+            adjust=ADJUST.NONE,
+        ),
+        _market_from_index_code(normalized),
+        normalized,
+        _period_from_freq(freq),
+        _estimate_daily_count(start_dt, end_dt),
+    )
+    if not records:
+        return pd.DataFrame()
+    out = pd.DataFrame(records)
+    if out.empty:
+        return out
+    out["index_code"] = normalized
+    time_column = "date_time" if "date_time" in out.columns else "datetime"
+    out["trade_time"] = pd.to_datetime(out[time_column], errors="coerce")
+    out["freq"] = freq
+    out["open"] = pd.to_numeric(out["open"], errors="coerce")
+    out["high"] = pd.to_numeric(out["high"], errors="coerce")
+    out["low"] = pd.to_numeric(out["low"], errors="coerce")
+    out["close"] = pd.to_numeric(out["close"], errors="coerce")
+    out["volume"] = pd.to_numeric(out["vol"], errors="coerce")
+    out["amount"] = pd.to_numeric(out["amount"], errors="coerce")
+    out = out[["index_code", "trade_time", "freq", "open", "high", "low", "close", "volume", "amount"]]
+    out = out.dropna(subset=["trade_time"])
+    out = add_quote_metrics(out)
+    out = filter_frame_by_datetime_range(out, "trade_time", start_dt, end_dt)
+    out = out.drop_duplicates(subset=["index_code", "trade_time", "freq"], keep="last")
+    return out.sort_values("trade_time").reset_index(drop=True)
+
+
 def _frame_to_stock_quotes(df: pd.DataFrame, freq: str) -> list[StockQuoteItem]:
     if df.empty:
         return []
@@ -136,6 +243,30 @@ def _frame_to_stock_quotes(df: pd.DataFrame, freq: str) -> list[StockQuoteItem]:
     return items
 
 
+def _frame_to_index_quotes(df: pd.DataFrame, freq: str) -> list[IndexQuoteItem]:
+    if df.empty:
+        return []
+    items: list[IndexQuoteItem] = []
+    for _, row in df.sort_values("trade_time").iterrows():
+        items.append(
+            IndexQuoteItem(
+                index_code=str(row["index_code"]),
+                trade_time=format_datetime_value(row["trade_time"], freq),
+                freq=str(row["freq"]),
+                open=float(row["open"]) if pd.notna(row["open"]) else None,
+                high=float(row["high"]) if pd.notna(row["high"]) else None,
+                low=float(row["low"]) if pd.notna(row["low"]) else None,
+                close=float(row["close"]) if pd.notna(row["close"]) else None,
+                pre_close=float(row["pre_close"]) if "pre_close" in row and pd.notna(row["pre_close"]) else None,
+                change=float(row["change"]) if "change" in row and pd.notna(row["change"]) else None,
+                pct_chg=float(row["pct_chg"]) if "pct_chg" in row and pd.notna(row["pct_chg"]) else None,
+                volume=float(row["volume"]) if "volume" in row and pd.notna(row["volume"]) else None,
+                amount=float(row["amount"]) if pd.notna(row["amount"]) else None,
+            )
+        )
+    return items
+
+
 def get_stock_quotes(
     codes: list[str],
     freq: str,
@@ -147,29 +278,30 @@ def get_stock_quotes(
     count: int | None,
     adjust: str,
 ) -> list[StockQuoteItem]:
-    if freq not in INTRADAY_RULES:
+    if freq not in INTRADAY_RULES and freq not in DAILY_FREQS:
         return []
 
-    request_start_dt, request_end_dt = build_time_bounds(trade_date, start_date, end_date, start_time, end_time, count, True)
+    intraday = freq in INTRADAY_RULES
+    request_start_dt, request_end_dt = build_time_bounds(trade_date, start_date, end_date, start_time, end_time, count, intraday)
     if request_start_dt is None and request_end_dt is None:
         request_end_dt = datetime.now()
-        request_start_dt = request_end_dt - timedelta(days=DEFAULT_LOOKBACK_DAYS)
+        request_start_dt = request_end_dt - timedelta(days=DEFAULT_LOOKBACK_DAYS if intraday else 400)
     elif request_start_dt is None:
-        request_start_dt = request_end_dt - timedelta(days=DEFAULT_LOOKBACK_DAYS)
+        request_start_dt = request_end_dt - timedelta(days=DEFAULT_LOOKBACK_DAYS if intraday else 400)
     elif request_end_dt is None:
         request_end_dt = datetime.now()
 
     items: list[StockQuoteItem] = []
     for code in codes:
         normalized_code = normalize_stock_code(code)
-        cache_path = build_cache_path("opentdx", ["stocks", "quotes"], {"code": normalized_code, "adjust": adjust, "source_freq": "1m"})
+        cache_path = build_cache_path("opentdx", ["stocks", "quotes"], {"code": normalized_code, "adjust": adjust, "source_freq": "1m" if intraday else freq})
         cache_df = read_cache_frame(cache_path)
         need_refresh = True
         if not cache_df.empty:
             filtered_cache = filter_frame_by_datetime_range(cache_df, "trade_time", request_start_dt, request_end_dt)
             need_refresh = filtered_cache.empty
         if need_refresh:
-            fetched_df = _fetch_stock_intraday_frame(normalized_code, request_start_dt, request_end_dt, adjust)
+            fetched_df = _fetch_stock_intraday_frame(normalized_code, request_start_dt, request_end_dt, adjust) if intraday else _fetch_stock_daily_frame(normalized_code, freq, request_start_dt, request_end_dt, adjust)
             if not fetched_df.empty:
                 merged_df = merge_cache_frame(cache_df, fetched_df, ["code", "trade_time", "freq"], ["trade_time"])
                 write_cache_frame(cache_path, merged_df)
@@ -178,11 +310,41 @@ def get_stock_quotes(
         if filtered_df.empty:
             continue
         filtered_df["trade_time"] = pd.to_datetime(filtered_df["trade_time"], errors="coerce")
-        agg_df = add_quote_metrics(aggregate_ohlc(filtered_df, freq))
+        agg_df = add_quote_metrics(aggregate_ohlc(filtered_df, freq)) if intraday else filtered_df
         agg_df["code"] = normalized_code
         agg_df["freq"] = freq
         agg_df["adjust"] = adjust
         agg_df = latest_n_rows(agg_df, "trade_time", count)
         items.extend(_frame_to_stock_quotes(agg_df, freq))
+    return items
+
+
+def get_index_quotes(index_codes: list[str], freq: str, trade_date: str, start_date: str, end_date: str, count: int | None) -> list[IndexQuoteItem]:
+    if freq not in DAILY_FREQS:
+        return []
+
+    request_start_dt, request_end_dt = build_time_bounds(trade_date, start_date, end_date, "", "", count, False)
+    if request_start_dt is None and request_end_dt is None:
+        request_end_dt = datetime.now()
+        request_start_dt = request_end_dt - timedelta(days=400)
+    elif request_start_dt is None:
+        request_start_dt = request_end_dt - timedelta(days=400)
+    elif request_end_dt is None:
+        request_end_dt = datetime.now()
+
+    items: list[IndexQuoteItem] = []
+    for index_code in index_codes:
+        normalized_code = normalize_index_code(index_code)
+        cache_path = build_cache_path("opentdx", ["indexes", "quotes"], {"index_code": normalized_code, "freq": freq})
+        cache_df = read_cache_frame(cache_path)
+        filtered_cache = filter_frame_by_datetime_range(cache_df, "trade_time", request_start_dt, request_end_dt)
+        if filtered_cache.empty or (count and len(filtered_cache) < count):
+            fetched_df = _fetch_index_daily_frame(normalized_code, freq, request_start_dt, request_end_dt)
+            if not fetched_df.empty:
+                cache_df = merge_cache_frame(cache_df, fetched_df, ["index_code", "trade_time", "freq"], ["trade_time"])
+                write_cache_frame(cache_path, cache_df)
+        filtered_df = filter_frame_by_datetime_range(cache_df, "trade_time", request_start_dt, request_end_dt)
+        filtered_df = latest_n_rows(filtered_df, "trade_time", count)
+        items.extend(_frame_to_index_quotes(filtered_df, freq))
     return items
 

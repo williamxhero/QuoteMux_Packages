@@ -4,11 +4,11 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
-from platform_models import IndexMemberItem, IndexQuoteItem, StockQuoteItem
 from quotemux.infra.cache.store import build_cache_path, filter_frame_by_date_range, filter_frame_by_datetime_range, latest_n_rows, merge_cache_frame, read_cache_frame, write_cache_frame
 from quotemux.infra.common import build_time_bounds, format_date_value, format_datetime_value, normalize_index_code, normalize_stock_code
 from quotemux.runtime_core.quality import calibrate_quote_units
 from quotemux.infra.provider_runtime.core import call_provider_api
+from platform_models import DragonTigerItem, ExpressItem, ShareholderCountItem, StockFinanceIndicatorItem, IndexMemberItem, IndexQuoteItem, StockQuoteItem
 
 try:
     import efinance as ef
@@ -46,6 +46,65 @@ def _require_available() -> None:
 def _call_ef(api_name: str, func, *args, **kwargs):
     _require_available()
     return call_provider_api("efinance", api_name, func, *args, **kwargs)
+
+
+def _float_value(value: object) -> float | None:
+    number = pd.to_numeric(value, errors="coerce")
+    return float(number) if pd.notna(number) else None
+
+
+def _int_value(value: object) -> int | None:
+    number = pd.to_numeric(value, errors="coerce")
+    return int(number) if pd.notna(number) else None
+
+
+def _text_value(value: object) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return str(value)
+
+
+def _date_window(date_value: str, start_date: str, end_date: str, lookback_days: int) -> tuple[str, str]:
+    actual_date = format_date_value(date_value)
+    if actual_date:
+        return actual_date, actual_date
+    actual_start = format_date_value(start_date)
+    actual_end = format_date_value(end_date)
+    if actual_start == "" and actual_end == "":
+        end_dt = datetime.now()
+        return (end_dt - timedelta(days=lookback_days)).strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")
+    if actual_start == "":
+        actual_start = actual_end
+    if actual_end == "":
+        actual_end = actual_start
+    return actual_start, actual_end
+
+
+def _period_candidates(report_period: str, start_period: str, end_period: str) -> list[str]:
+    actual_period = format_date_value(report_period)
+    if actual_period:
+        return [actual_period]
+    actual_start = format_date_value(start_period)
+    actual_end = format_date_value(end_period)
+    if actual_start == "" or actual_end == "":
+        return []
+    start_dt = datetime.strptime(actual_start, "%Y-%m-%d")
+    end_dt = datetime.strptime(actual_end, "%Y-%m-%d")
+    rows: list[str] = []
+    for year in range(start_dt.year, end_dt.year + 1):
+        for month, day in ((3, 31), (6, 30), (9, 30), (12, 31)):
+            current = datetime(year, month, day)
+            if start_dt <= current <= end_dt:
+                rows.append(current.strftime("%Y-%m-%d"))
+    return rows
+
+
+def _snapshot_trade_date(row: pd.Series, fallback_date: str) -> str:
+    if "最新交易日" in row and pd.notna(row["最新交易日"]):
+        return format_date_value(row["最新交易日"])
+    if "更新时间" in row and pd.notna(row["更新时间"]):
+        return format_date_value(row["更新时间"])
+    return fallback_date
 
 
 def _resolve_time_window(
@@ -255,4 +314,159 @@ def get_index_members(index_code: str, trade_date: str) -> list[IndexMemberItem]
             )
         )
     return items
+
+
+def get_stock_daily_snapshot_full(trade_date: str) -> list[StockQuoteItem]:
+    actual_trade_date = format_date_value(trade_date)
+    if actual_trade_date == "":
+        return []
+    result = _call_ef("stock.get_realtime_quotes", ef.stock.get_realtime_quotes, None)
+    if result is None or result.empty:
+        return []
+    items: list[StockQuoteItem] = []
+    for _, row in result.iterrows():
+        code = normalize_stock_code(str(row.get("代码", "")))
+        row_trade_date = _snapshot_trade_date(row, actual_trade_date)
+        if code == "" or row_trade_date != actual_trade_date:
+            continue
+        pre_close = _float_value(row.get("昨日收盘", row.get("昨收")))
+        close = _float_value(row.get("最新价", row.get("收盘")))
+        change = _float_value(row.get("涨跌额"))
+        pct_chg = _float_value(row.get("涨跌幅"))
+        if change is None and close is not None and pre_close is not None:
+            change = close - pre_close
+        if pct_chg is None and change is not None and pre_close not in {None, 0}:
+            pct_chg = change / pre_close * 100
+        items.append(
+            StockQuoteItem(
+                code=code,
+                trade_time=row_trade_date,
+                freq="1d",
+                open=_float_value(row.get("今开", row.get("开盘"))),
+                high=_float_value(row.get("最高")),
+                low=_float_value(row.get("最低")),
+                close=close,
+                pre_close=pre_close,
+                change=change,
+                pct_chg=pct_chg,
+                volume=_float_value(row.get("成交量")),
+                amount=_float_value(row.get("成交额")),
+                adjust="none",
+            )
+        )
+    return sorted(items, key=lambda item: item.code)
+
+
+def get_dragon_tiger(trade_date: str, start_date: str, end_date: str, code: str, limit: int) -> list[DragonTigerItem]:
+    actual_start, actual_end = _date_window(trade_date, start_date, end_date, 30)
+    result = _call_ef("stock.get_daily_billboard", ef.stock.get_daily_billboard, actual_start, actual_end)
+    if result is None or result.empty:
+        return []
+    normalized_code = normalize_stock_code(code)
+    items: list[DragonTigerItem] = []
+    for _, row in result.iterrows():
+        row_code = normalize_stock_code(str(row.get("股票代码", "")))
+        if normalized_code and row_code != normalized_code:
+            continue
+        items.append(
+            DragonTigerItem(
+                trade_date=format_date_value(row.get("上榜日期", "")),
+                code=row_code,
+                name=_text_value(row.get("股票名称", "")),
+                reason=_text_value(row.get("上榜原因", row.get("解读", ""))),
+                buy_amount=_float_value(row.get("龙虎榜买入额")),
+                sell_amount=_float_value(row.get("龙虎榜卖出额")),
+                net_amount=_float_value(row.get("龙虎榜净买额")),
+            )
+        )
+    return sorted(items, key=lambda item: (item.trade_date, item.code, item.reason))[:limit]
+
+
+def get_shareholder_count(code: str, trade_date: str, start_date: str, end_date: str) -> list[ShareholderCountItem]:
+    normalized_code = normalize_stock_code(code)
+    periods = _period_candidates(trade_date, start_date, end_date)
+    if periods == []:
+        periods = [""]
+    items: list[ShareholderCountItem] = []
+    for period in periods:
+        result = _call_ef("stock.get_latest_holder_number", ef.stock.get_latest_holder_number, period or None)
+        if result is None or result.empty:
+            continue
+        for _, row in result.iterrows():
+            row_code = normalize_stock_code(str(row.get("股票代码", "")))
+            if normalized_code and row_code != normalized_code:
+                continue
+            items.append(
+                ShareholderCountItem(
+                    code=row_code,
+                    trade_date=format_date_value(row.get("股东户数统计截止日", period)),
+                    holder_count=_int_value(row.get("股东人数")),
+                    avg_holding=_float_value(row.get("户均持股数量")),
+                )
+            )
+    return sorted(items, key=lambda item: (item.code, item.trade_date))
+
+
+def _company_performance_frame(period: str) -> pd.DataFrame:
+    return _call_ef("stock.get_all_company_performance", ef.stock.get_all_company_performance, period or None)
+
+
+def get_express(code: str, report_period: str, start_period: str, end_period: str) -> list[ExpressItem]:
+    normalized_code = normalize_stock_code(code)
+    periods = _period_candidates(report_period, start_period, end_period)
+    if periods == []:
+        periods = [""]
+    items: list[ExpressItem] = []
+    for period in periods:
+        result = _company_performance_frame(period)
+        if result is None or result.empty:
+            continue
+        for _, row in result.iterrows():
+            row_code = normalize_stock_code(str(row.get("股票代码", "")))
+            if normalized_code and row_code != normalized_code:
+                continue
+            items.append(
+                ExpressItem(
+                    code=row_code,
+                    report_period=format_date_value(period or row.get("报告日期", "")),
+                    announce_date=format_date_value(row.get("公告日期", "")),
+                    revenue=_float_value(row.get("营业收入")),
+                    operating_profit=None,
+                    total_profit=None,
+                    net_profit=_float_value(row.get("净利润")),
+                    eps=_float_value(row.get("每股收益")),
+                    roe=_float_value(row.get("净资产收益率")),
+                )
+            )
+    return sorted(items, key=lambda item: (item.code, item.report_period, item.announce_date))
+
+
+def get_stock_finance_indicators(code: str, codes: str, report_period: str, start_period: str, end_period: str) -> list[StockFinanceIndicatorItem]:
+    request_codes = [normalize_stock_code(item) for item in ([code] if code else codes.split(",")) if normalize_stock_code(item)]
+    periods = _period_candidates(report_period, start_period, end_period)
+    if periods == []:
+        periods = [""]
+    items: list[StockFinanceIndicatorItem] = []
+    for period in periods:
+        result = _company_performance_frame(period)
+        if result is None or result.empty:
+            continue
+        for _, row in result.iterrows():
+            row_code = normalize_stock_code(str(row.get("股票代码", "")))
+            if request_codes and row_code not in request_codes:
+                continue
+            items.append(
+                StockFinanceIndicatorItem(
+                    code=row_code,
+                    report_period=format_date_value(period or row.get("报告日期", "")),
+                    roe=_float_value(row.get("净资产收益率")),
+                    roa=None,
+                    gross_margin=_float_value(row.get("销售毛利率")),
+                    net_margin=None,
+                    asset_turnover=None,
+                    current_ratio=None,
+                    debt_to_asset=None,
+                )
+            )
+    return sorted(items, key=lambda item: (item.code, item.report_period))
 

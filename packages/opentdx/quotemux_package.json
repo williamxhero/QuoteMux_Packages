@@ -1,10 +1,24 @@
 {
   "package_id": "opentdx",
-  "version": "2026.4.23",
+  "version": "2026.4.30",
   "source_name": "opentdx",
   "display_name": "OpenTDX",
   "description": "OpenTDX 数据源。",
   "capabilities": [
+    {
+      "capability_id": "indexes.quotes.daily",
+      "support_level": "native",
+      "handler_name": "get_index_quotes",
+      "mergeable": true,
+      "notes": "使用 stock_kline 获取指数日线"
+    },
+    {
+      "capability_id": "stocks.quotes.daily",
+      "support_level": "native",
+      "handler_name": "get_stock_quotes",
+      "mergeable": true,
+      "notes": "使用 stock_kline 获取股票日线"
+    },
     {
       "capability_id": "stocks.quotes.intraday",
       "support_level": "native",
@@ -14,10 +28,10 @@
     },
     {
       "capability_id": "stocks.signals.hl",
-      "support_level": "native",
+      "support_level": "derived",
       "handler_name": "get_stock_quotes",
       "mergeable": true,
-      "notes": ""
+      "notes": "由 QuoteMux 基于 1m 行情派生"
     }
   ],
   "capability_tags": [
@@ -45,6 +59,7 @@
   "secret_fields": [],
   "supports_multi_instance": true,
   "handler_targets": {
+    "get_index_quotes": "quotemux_packages.opentdx.source:get_index_quotes",
     "get_stock_quotes": "quotemux_packages.opentdx.source:get_stock_quotes"
   },
   "origin": "builtin",

@@ -1,6 +1,6 @@
 {
   "package_id": "tushare",
-  "version": "2026.4.23",
+  "version": "2026.4.30",
   "source_name": "tushare",
   "display_name": "Tushare",
   "description": "Tushare 数据源。",
@@ -56,10 +56,10 @@
     },
     {
       "capability_id": "boards.reference.categories",
-      "support_level": "native",
+      "support_level": "static",
       "handler_name": "get_board_categories",
       "mergeable": true,
-      "notes": ""
+      "notes": "本地固定板块分类"
     },
     {
       "capability_id": "indexes.catalog",
@@ -78,7 +78,7 @@
     {
       "capability_id": "indexes.profile",
       "support_level": "native",
-      "handler_name": "get_index_profile",
+      "handler_name": "get_index_catalog",
       "mergeable": true,
       "notes": ""
     },
@@ -133,10 +133,10 @@
     },
     {
       "capability_id": "markets.connect.quotas",
-      "support_level": "native",
+      "support_level": "derived",
       "handler_name": "get_connect_quotas",
       "mergeable": true,
-      "notes": ""
+      "notes": "由沪深港通资金流和固定额度口径派生"
     },
     {
       "capability_id": "markets.events.block_trades",
@@ -189,10 +189,10 @@
     },
     {
       "capability_id": "markets.trading.sessions",
-      "support_level": "native",
+      "support_level": "static",
       "handler_name": "get_market_sessions",
       "mergeable": true,
-      "notes": ""
+      "notes": "本地固定交易时段"
     },
     {
       "capability_id": "rankings.research.broker_monthly_picks",
@@ -266,10 +266,10 @@
     },
     {
       "capability_id": "stocks.factors.technical",
-      "support_level": "native",
+      "support_level": "derived",
       "handler_name": "get_technical_factors",
       "mergeable": true,
-      "notes": ""
+      "notes": "由 QuoteMux 基于日线行情派生"
     },
     {
       "capability_id": "stocks.finance.audits",
@@ -420,10 +420,10 @@
     },
     {
       "capability_id": "stocks.ownership.shareholders.changes",
-      "support_level": "native",
+      "support_level": "derived",
       "handler_name": "get_shareholder_changes",
       "mergeable": true,
-      "notes": ""
+      "notes": "由股东户数序列差分派生"
     },
     {
       "capability_id": "stocks.ownership.shareholders.count",

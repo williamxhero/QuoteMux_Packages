@@ -1,6 +1,6 @@
 {
   "package_id": "efinance",
-  "version": "2026.4.23",
+  "version": "2026.4.30",
   "source_name": "efinance",
   "display_name": "EFinance",
   "description": "EFinance 数据源。",
@@ -20,6 +20,34 @@
       "notes": ""
     },
     {
+      "capability_id": "markets.participants.dragon_tiger",
+      "support_level": "native",
+      "handler_name": "get_dragon_tiger",
+      "mergeable": true,
+      "notes": "EFinance 龙虎榜详情"
+    },
+    {
+      "capability_id": "stocks.finance.express",
+      "support_level": "partial",
+      "handler_name": "get_express",
+      "mergeable": true,
+      "notes": "EFinance 季度业绩表现，按快报模型映射可用字段"
+    },
+    {
+      "capability_id": "stocks.finance.indicators",
+      "support_level": "partial",
+      "handler_name": "get_stock_finance_indicators",
+      "mergeable": true,
+      "notes": "EFinance 季度业绩表现，稳定映射 ROE 和毛利率"
+    },
+    {
+      "capability_id": "stocks.ownership.shareholders.count",
+      "support_level": "partial",
+      "handler_name": "get_shareholder_count",
+      "mergeable": true,
+      "notes": "EFinance 股东户数，只按公开报告期查询"
+    },
+    {
       "capability_id": "stocks.quotes.daily",
       "support_level": "native",
       "handler_name": "get_stock_quotes",
@@ -28,10 +56,10 @@
     },
     {
       "capability_id": "stocks.quotes.daily_snapshot",
-      "support_level": "native",
-      "handler_name": "get_stock_quotes",
+      "support_level": "partial",
+      "handler_name": "get_stock_daily_snapshot_full",
       "mergeable": true,
-      "notes": ""
+      "notes": "使用实时全市场快照，仅覆盖最新交易日"
     },
     {
       "capability_id": "stocks.quotes.intraday",
@@ -42,10 +70,10 @@
     },
     {
       "capability_id": "stocks.signals.hl",
-      "support_level": "native",
+      "support_level": "derived",
       "handler_name": "get_stock_quotes",
       "mergeable": true,
-      "notes": ""
+      "notes": "由 QuoteMux 基于 1m 行情派生"
     }
   ],
   "capability_tags": [
@@ -65,8 +93,13 @@
   "secret_fields": [],
   "supports_multi_instance": true,
   "handler_targets": {
+    "get_dragon_tiger": "quotemux_packages.efinance.source:get_dragon_tiger",
+    "get_express": "quotemux_packages.efinance.source:get_express",
     "get_index_members": "quotemux_packages.efinance.source:get_index_members",
     "get_index_quotes": "quotemux_packages.efinance.source:get_index_quotes",
+    "get_shareholder_count": "quotemux_packages.efinance.source:get_shareholder_count",
+    "get_stock_daily_snapshot_full": "quotemux_packages.efinance.source:get_stock_daily_snapshot_full",
+    "get_stock_finance_indicators": "quotemux_packages.efinance.source:get_stock_finance_indicators",
     "get_stock_quotes": "quotemux_packages.efinance.source:get_stock_quotes"
   },
   "origin": "builtin",
