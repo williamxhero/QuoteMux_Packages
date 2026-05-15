@@ -484,11 +484,20 @@ def get_board_quotes(board_codes: list[str], freq: str, trade_date: str, start_d
 
 
 def get_board_daily_money_flow_snapshot(trade_date: str, scope: str, limit: int, offset: int) -> list[BoardMoneyFlowItem]:
-    catalog_items = get_board_catalog(scope if scope in {"industry", "concept"} else "", "a_share", "active", limit, offset)
+    scopes = [scope] if scope in {"industry", "concept"} else ["concept", "industry"]
     items: list[BoardMoneyFlowItem] = []
-    for catalog_item in catalog_items:
-        items.extend(get_board_money_flow(catalog_item.board_code, trade_date, "", "", scope))
-    return sorted(items, key=lambda item: (item.board_code, item.trade_date))
+    target_count = limit + offset
+    for current_scope in scopes:
+        catalog_items = get_board_catalog(current_scope, "a_share", "active", 10000, 0)
+        if current_scope == "industry":
+            catalog_items = [item for item in catalog_items if item.board_code.startswith("881")]
+        for catalog_item in catalog_items:
+            items.extend(get_board_money_flow(catalog_item.board_code, trade_date, "", "", current_scope))
+            if len(items) >= target_count:
+                break
+        if len(items) >= target_count:
+            break
+    return sorted(items, key=lambda item: (item.board_code, item.trade_date))[offset: offset + limit]
 
 
 def get_market_sessions(codes: str) -> list[TradingSessionItem]:
@@ -1092,6 +1101,8 @@ def get_board_money_flow(board_code: str, trade_date: str, start_date: str, end_
         write_cache_frame(cache_path, merged_cache)
         cache_df = merged_cache
     filtered_df = filter_frame_by_date_range(cache_df, "trade_date", actual_start, actual_end)
+    if filtered_df.empty or "trade_date" not in filtered_df.columns:
+        return []
     items: list[BoardMoneyFlowItem] = []
     for _, row in filtered_df.sort_values("trade_date").iterrows():
         items.append(

@@ -32,6 +32,8 @@ def get_chip_distribution(code: str, trade_date: str, start_date: str, end_date:
         lambda start_value, end_value: _fetch_chip_distribution_frame(code, start_value, end_value),
     )
     filtered_df = filter_frame_by_date_range(cache_df, "trade_date", actual_start, actual_end)
+    if filtered_df.empty or "trade_date" not in filtered_df.columns:
+        return []
     return [
         ChipDistributionItem(
             code=str(row["code"]),
@@ -69,6 +71,8 @@ def get_chip_performance(code: str, trade_date: str, start_date: str, end_date: 
         lambda start_value, end_value: _fetch_chip_performance_frame(code, start_value, end_value),
     )
     filtered_df = filter_frame_by_date_range(cache_df, "trade_date", actual_start, actual_end)
+    if filtered_df.empty or "trade_date" not in filtered_df.columns:
+        return []
     return [
         ChipPerformanceItem(
             code=str(row["code"]),

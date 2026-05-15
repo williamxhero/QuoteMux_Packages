@@ -8,8 +8,22 @@ from quotemux.infra.common import normalize_stock_code, stock_code_to_ts
 from .helpers import normalize_date_range, normalize_period_range, query_frame, read_cached_once, read_cached_ranges
 
 
+def _ccass_stock_code_to_ts(code: str) -> str:
+    text = str(code).strip().upper()
+    if text == "":
+        return ""
+    if "." in text:
+        left, right = text.split(".", 1)
+        if right == "HK":
+            return f"{left.zfill(5)}.HK"
+    normalized = normalize_stock_code(text)
+    if normalized.isdigit() and len(normalized) <= 5:
+        return f"{normalized.zfill(5)}.HK"
+    return stock_code_to_ts(text)
+
+
 def _fetch_ccass_hold_frame(code: str, start_value: str, end_value: str) -> pd.DataFrame:
-    df = query_frame("ccass_hold", ts_code=stock_code_to_ts(code), start_date=start_value, end_date=end_value)
+    df = query_frame("ccass_hold", ts_code=_ccass_stock_code_to_ts(code), start_date=start_value, end_date=end_value)
     if df.empty:
         return df
     work = df.copy()
@@ -48,7 +62,7 @@ def get_ccass_holdings(code: str, trade_date: str, start_date: str, end_date: st
 
 
 def _fetch_ccass_detail_frame(code: str, start_value: str, end_value: str) -> pd.DataFrame:
-    df = query_frame("ccass_hold_detail", ts_code=stock_code_to_ts(code), start_date=start_value, end_date=end_value)
+    df = query_frame("ccass_hold_detail", ts_code=_ccass_stock_code_to_ts(code), start_date=start_value, end_date=end_value)
     if df.empty:
         return df
     work = df.copy()

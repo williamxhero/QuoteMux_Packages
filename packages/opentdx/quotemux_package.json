@@ -25,13 +25,6 @@
       "handler_name": "get_stock_quotes",
       "mergeable": true,
       "notes": ""
-    },
-    {
-      "capability_id": "stocks.signals.hl",
-      "support_level": "derived",
-      "handler_name": "get_stock_quotes",
-      "mergeable": true,
-      "notes": "由 QuoteMux 基于 1m 行情派生"
     }
   ],
   "capability_tags": [

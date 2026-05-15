@@ -265,13 +265,6 @@
       "notes": ""
     },
     {
-      "capability_id": "stocks.factors.technical",
-      "support_level": "derived",
-      "handler_name": "get_technical_factors",
-      "mergeable": true,
-      "notes": "由 QuoteMux 基于日线行情派生"
-    },
-    {
       "capability_id": "stocks.finance.audits",
       "support_level": "native",
       "handler_name": "get_audits",
@@ -417,13 +410,6 @@
       "handler_name": "get_pledge_stats",
       "mergeable": true,
       "notes": ""
-    },
-    {
-      "capability_id": "stocks.ownership.shareholders.changes",
-      "support_level": "derived",
-      "handler_name": "get_shareholder_changes",
-      "mergeable": true,
-      "notes": "由股东户数序列差分派生"
     },
     {
       "capability_id": "stocks.ownership.shareholders.count",
@@ -616,7 +602,6 @@
     "get_research_reports": "quotemux_packages.tushare.source:get_research_reports",
     "get_rights_issues": "quotemux_packages.tushare.source:get_rights_issues",
     "get_share_changes": "quotemux_packages.tushare.source:get_share_changes",
-    "get_shareholder_changes": "quotemux_packages.tushare.source:get_shareholder_changes",
     "get_shareholder_count": "quotemux_packages.tushare.source:get_shareholder_count",
     "get_shareholder_top10": "quotemux_packages.tushare.source:get_shareholder_top10",
     "get_stock_ah_comparisons": "quotemux_packages.tushare.source:get_stock_ah_comparisons",
@@ -635,7 +620,6 @@
     "get_stock_quotes": "quotemux_packages.tushare.source:get_stock_quotes",
     "get_stock_risk_flags": "quotemux_packages.tushare.source:get_stock_risk_flags",
     "get_surveys": "quotemux_packages.tushare.source:get_surveys",
-    "get_technical_factors": "quotemux_packages.tushare.source:get_technical_factors",
     "get_trading_calendar": "quotemux_packages.tushare.source:get_trading_calendar",
     "get_unlock_schedules": "quotemux_packages.tushare.source:get_unlock_schedules"
   },

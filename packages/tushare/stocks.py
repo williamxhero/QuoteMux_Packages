@@ -52,6 +52,8 @@ def get_stock_archive(trade_date: str, code: str, name: str, industry: str, area
         return []
     cache_df = read_cached_ranges(["stocks", "catalog", "archive"], {"scope": "all"}, "trade_date", trade_date, trade_date, "day", _fetch_stock_archive_frame)
     filtered_df = filter_frame_by_date_range(cache_df, "trade_date", trade_date, trade_date)
+    if filtered_df.empty or "trade_date" not in filtered_df.columns:
+        return []
     if code:
         filtered_df = filtered_df[filtered_df["code"] == normalize_stock_code(code)]
     if name:
@@ -363,19 +365,20 @@ def _fetch_risk_flag_frame(start_value: str, end_value: str) -> pd.DataFrame:
     work = df.copy()
     work["code"] = work["ts_code"].astype(str).str.split(".").str[0]
     work["name"] = work["name"] if "name" in work.columns else ""
-    work["flag_type"] = "st"
-    work["start_date"] = work["start_date"].astype(str) if "start_date" in work.columns else ""
+    work["flag_type"] = work["type"].fillna("").astype(str).str.lower() if "type" in work.columns else "st"
+    work["trade_date"] = work["trade_date"].astype(str) if "trade_date" in work.columns else start_value
     work["end_date"] = work["end_date"].astype(str) if "end_date" in work.columns else ""
     work["status"] = "active"
-    return work[["code", "name", "flag_type", "start_date", "end_date", "status"]]
+    return work[["code", "name", "flag_type", "trade_date", "end_date", "status"]]
 
 
 def get_stock_risk_flags(trade_date: str, start_date: str, end_date: str, flag_type: str, status: str, limit: int, offset: int) -> list[StockRiskFlagItem]:
     actual_start, actual_end = normalize_date_range(trade_date, start_date, end_date, 180)
-    cache_df = read_cached_ranges(["stocks", "indicators", "risk-flags"], {"scope": "all"}, "start_date", actual_start, actual_end, "day", _fetch_risk_flag_frame)
-    filtered_df = filter_frame_by_date_range(cache_df, "start_date", actual_start, actual_end)
+    filtered_df = filter_frame_by_date_range(_fetch_risk_flag_frame(actual_start, actual_end), "trade_date", actual_start, actual_end)
+    if filtered_df.empty or "trade_date" not in filtered_df.columns:
+        return []
     if flag_type:
-        filtered_df = filtered_df[filtered_df["flag_type"] == flag_type]
+        filtered_df = filtered_df[filtered_df["flag_type"] == flag_type.lower()]
     if status:
         filtered_df = filtered_df[filtered_df["status"] == status]
     return [
@@ -383,11 +386,11 @@ def get_stock_risk_flags(trade_date: str, start_date: str, end_date: str, flag_t
             code=str(row["code"]),
             name=str(row["name"]) if pd.notna(row["name"]) else "",
             flag_type=str(row["flag_type"]),
-            start_date=str(row["start_date"]),
+            start_date=str(row["trade_date"]),
             end_date=str(row["end_date"]) if pd.notna(row["end_date"]) else "",
             status=str(row["status"]),
         )
-        for _, row in filtered_df.sort_values(["start_date", "code"]).iloc[offset: offset + limit].iterrows()
+        for _, row in filtered_df.sort_values(["trade_date", "code"]).iloc[offset: offset + limit].iterrows()
     ]
 
 
@@ -654,6 +657,8 @@ def get_nine_turn(code: str, freq: str, trade_date: str, start_date: str, end_da
         lambda start_value, end_value: _fetch_nine_turn_frame(code, actual_freq, start_value, end_value),
     )
     filtered_df = filter_frame_by_date_range(cache_df, "trade_time", actual_start, actual_end)
+    if filtered_df.empty or "trade_time" not in filtered_df.columns:
+        return []
     return [
         NineTurnItem(
             code=str(row["code"]),
@@ -681,13 +686,45 @@ def _fetch_premarket_frame(start_value: str, end_value: str) -> pd.DataFrame:
     return work[["code", "trade_date", "total_share", "float_share", "limit_up", "limit_down"]]
 
 
+def _fetch_premarket_fallback_frame(code: str, start_value: str, end_value: str) -> pd.DataFrame:
+    ts_code = stock_code_to_ts(code)
+    rows: list[dict[str, object]] = []
+    for day in plan_days(start_value, end_value):
+        basic_df = query_frame("daily_basic", ts_code=ts_code, start_date=day, end_date=day)
+        limit_df = query_frame("stk_limit", trade_date=day)
+        limit_row = pd.Series(dtype=object)
+        if not limit_df.empty and "ts_code" in limit_df.columns:
+            matched_limit = limit_df[limit_df["ts_code"].astype(str) == ts_code]
+            if not matched_limit.empty:
+                limit_row = matched_limit.iloc[0]
+        basic_row = pd.Series(dtype=object)
+        if not basic_df.empty:
+            basic_row = basic_df.iloc[0]
+        if basic_row.empty and limit_row.empty:
+            continue
+        rows.append(
+            {
+                "code": normalize_stock_code(code),
+                "trade_date": day,
+                "total_share": basic_row.get("total_share"),
+                "float_share": basic_row.get("float_share"),
+                "limit_up": limit_row.get("up_limit"),
+                "limit_down": limit_row.get("down_limit"),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def get_premarket(code: str, trade_date: str, start_date: str, end_date: str) -> list[StockPremarketItem]:
     actual_start, actual_end = normalize_date_range(trade_date, start_date, end_date, 30)
-    cache_df = read_cached_ranges(["stocks", "indicators", "premarket"], {"scope": "all"}, "trade_date", actual_start, actual_end, "day", _fetch_premarket_frame)
-    filtered_df = filter_frame_by_date_range(cache_df, "trade_date", actual_start, actual_end)
+    source_df = _fetch_premarket_frame(actual_start, actual_end)
+    filtered_df = filter_frame_by_date_range(source_df, "trade_date", actual_start, actual_end)
+    if not filtered_df.empty and "code" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["code"] == normalize_stock_code(code)]
     if filtered_df.empty or "code" not in filtered_df.columns:
+        filtered_df = _fetch_premarket_fallback_frame(code, actual_start, actual_end)
+    if filtered_df.empty or "trade_date" not in filtered_df.columns:
         return []
-    filtered_df = filtered_df[filtered_df["code"] == normalize_stock_code(code)]
     return [
         StockPremarketItem(
             code=str(row["code"]),
@@ -708,9 +745,11 @@ def _fetch_auction_day(code: str, session: str, trade_date: str) -> pd.DataFrame
         return df
     work = df.copy()
     work["code"] = work["ts_code"].astype(str).str.split(".").str[0] if "ts_code" in work.columns else work["code"].astype(str)
-    work = work[work["code"] == normalize_stock_code(code)]
-    if work.empty:
-        return work
+    actual_code = normalize_stock_code(code)
+    if actual_code != "":
+        work = work[work["code"] == actual_code]
+        if work.empty:
+            return work
     work["trade_date"] = trade_date
     work["auction_time"] = work["trade_time"] if "trade_time" in work.columns else ""
     work["price"] = work["price"] if "price" in work.columns else work["match_price"] if "match_price" in work.columns else None

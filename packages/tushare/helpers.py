@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 from quotemux.infra.cache.store import build_cache_path, merge_cache_frame, plan_missing_ranges, read_cache_frame, write_cache_frame
+from quotemux.infra.common import format_date_value
 from quotemux.infra.config import DATE_FORMAT
 
 from .rate_limit import call_tushare_api
@@ -39,7 +40,7 @@ def normalize_date_range(trade_date: str, start_date: str, end_date: str, defaul
         actual_start = actual_end
     elif not actual_end:
         actual_end = actual_start
-    return actual_start, actual_end
+    return format_date_value(actual_start).replace("-", ""), format_date_value(actual_end).replace("-", "")
 
 
 def normalize_period_range(report_period: str, start_period: str, end_period: str, default_years: int = 2) -> tuple[str, str]:
@@ -53,14 +54,14 @@ def normalize_period_range(report_period: str, start_period: str, end_period: st
         actual_start = actual_end
     elif not actual_end:
         actual_end = actual_start
-    return actual_start, actual_end
+    return format_date_value(actual_start).replace("-", ""), format_date_value(actual_end).replace("-", "")
 
 
 def plan_days(start_value: str, end_value: str) -> list[str]:
     if not start_value or not end_value:
         return []
-    start_dt = datetime.strptime(start_value, DATE_FORMAT)
-    end_dt = datetime.strptime(end_value, DATE_FORMAT)
+    start_dt = datetime.strptime(format_date_value(start_value).replace("-", ""), DATE_FORMAT)
+    end_dt = datetime.strptime(format_date_value(end_value).replace("-", ""), DATE_FORMAT)
     items: list[str] = []
     current = start_dt
     while current <= end_dt:

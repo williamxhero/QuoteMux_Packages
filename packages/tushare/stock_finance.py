@@ -310,6 +310,8 @@ def get_audits(code: str, report_period: str, start_period: str, end_period: str
         lambda start_value, end_value: _fetch_audit_frame(code, start_value, end_value),
     )
     filtered_df = filter_frame_by_date_range(cache_df, "report_period", actual_start, actual_end)
+    if filtered_df.empty or "report_period" not in filtered_df.columns:
+        return []
     return [
         AuditItem(
             code=str(row["code"]),

@@ -9,6 +9,25 @@ from .helpers import normalize_date_range, plan_days, query_frame, read_cached_o
 from .stocks import get_auctions
 
 
+CONNECT_TOP10_MARKETS = {
+    "northbound": [("northbound_sh", "hsgt_top10", "1"), ("northbound_sz", "hsgt_top10", "3")],
+    "southbound": [("southbound_sh", "ggt_top10", "2"), ("southbound_sz", "ggt_top10", "4")],
+    "sh_connect": [("northbound_sh", "hsgt_top10", "1")],
+    "sz_connect": [("northbound_sz", "hsgt_top10", "3")],
+    "sh_hk": [("southbound_sh", "ggt_top10", "2")],
+    "sz_hk": [("southbound_sz", "ggt_top10", "4")],
+    "沪股通": [("northbound_sh", "hsgt_top10", "1")],
+    "深股通": [("northbound_sz", "hsgt_top10", "3")],
+    "港股通": [("southbound_sh", "ggt_top10", "2"), ("southbound_sz", "ggt_top10", "4")],
+}
+CONNECT_TOP10_DEFAULT_MARKETS = [
+    ("northbound_sh", "hsgt_top10", "1"),
+    ("northbound_sz", "hsgt_top10", "3"),
+    ("southbound_sh", "ggt_top10", "2"),
+    ("southbound_sz", "ggt_top10", "4"),
+]
+
+
 def _fetch_connect_flow_frame(start_value: str, end_value: str) -> pd.DataFrame:
     df = query_frame("moneyflow_hsgt", start_date=start_value, end_date=end_value)
     if df.empty:
@@ -99,38 +118,37 @@ def _fetch_connect_quota_frame(start_value: str, end_value: str) -> pd.DataFrame
     return pd.DataFrame(rows)
 
 
-def _fetch_connect_top10_day(trade_date: str, market_type: str) -> pd.DataFrame:
-    df = query_frame("hsgt_top10", trade_date=trade_date, market_type=market_type)
-    if df.empty:
-        df = query_frame("ggt_top10", trade_date=trade_date, market_type=market_type)
+def _connect_top10_amount_columns(api_name: str, market_value: str) -> tuple[str, str, str]:
+    if api_name == "ggt_top10" and market_value == "2":
+        return "sh_buy", "sh_sell", "sh_net_amount"
+    if api_name == "ggt_top10" and market_value == "4":
+        return "sz_buy", "sz_sell", "sz_net_amount"
+    return "buy", "sell", "net_amount"
+
+
+def _fetch_connect_top10_day(trade_date: str, market_label: str, api_name: str, market_value: str) -> pd.DataFrame:
+    df = query_frame(api_name, trade_date=trade_date, market_type=market_value)
     if df.empty:
         return df
     work = df.copy()
     work["trade_date"] = trade_date
-    work["market"] = market_type
+    work["market"] = market_label
     work["code"] = work["ts_code"].astype(str).str.split(".").str[0] if "ts_code" in work.columns else ""
     work["rank"] = work["rank"] if "rank" in work.columns else range(1, len(work) + 1)
-    work["buy_amount"] = work["buy"] if "buy" in work.columns else work["buy_amount"] if "buy_amount" in work.columns else None
-    work["sell_amount"] = work["sell"] if "sell" in work.columns else work["sell_amount"] if "sell_amount" in work.columns else None
-    work["net_amount"] = work["net_amount"] if "net_amount" in work.columns else None
+    buy_column, sell_column, net_column = _connect_top10_amount_columns(api_name, market_value)
+    work["buy_amount"] = work[buy_column] if buy_column in work.columns else None
+    work["sell_amount"] = work[sell_column] if sell_column in work.columns else None
+    work["net_amount"] = work[net_column] if net_column in work.columns else None
     return work[["trade_date", "market", "code", "name", "rank", "buy_amount", "sell_amount", "net_amount"]]
 
 
 def get_connect_active_top10(trade_date: str, start_date: str, end_date: str, market_type: str, limit: int) -> list[ConnectActiveTop10Item]:
     actual_start, actual_end = normalize_date_range(trade_date, start_date, end_date, 30)
-    type_values = [market_type] if market_type else ["northbound", "southbound", "sh_hk", "sz_hk"]
+    type_values = CONNECT_TOP10_MARKETS.get(market_type, CONNECT_TOP10_DEFAULT_MARKETS if market_type == "" else [])
     items: list[ConnectActiveTop10Item] = []
-    for current_type in type_values:
-        cache_df = read_cached_ranges(
-            ["markets", "connect", "active-top10"],
-            {"type": current_type},
-            "trade_date",
-            actual_start,
-            actual_end,
-            "day",
-            lambda start_value, end_value: pd.concat([_fetch_connect_top10_day(day, current_type) for day in plan_days(start_value, end_value)], ignore_index=True) if plan_days(start_value, end_value) else pd.DataFrame(),
-        )
-        filtered_df = filter_frame_by_date_range(cache_df, "trade_date", actual_start, actual_end)
+    for market_label, api_name, market_value in type_values:
+        days = plan_days(actual_start, actual_end)
+        filtered_df = pd.concat([_fetch_connect_top10_day(day, market_label, api_name, market_value) for day in days], ignore_index=True) if days else pd.DataFrame()
         if filtered_df.empty or "trade_date" not in filtered_df.columns:
             continue
         for _, row in filtered_df.sort_values(["trade_date", "rank"]).head(limit).iterrows():
@@ -336,7 +354,10 @@ def get_hot_money_details(trade_date: str, start_date: str, end_date: str, name:
 
 def get_market_open_auctions(codes: str, trade_date: str) -> list[AuctionItem]:
     items: list[AuctionItem] = []
-    for code in split_csv(codes):
+    actual_codes = split_csv(codes)
+    if actual_codes == []:
+        return get_auctions("", "open", trade_date, "", "")
+    for code in actual_codes:
         items.extend(get_auctions(code, "open", trade_date, "", ""))
     return items
 
