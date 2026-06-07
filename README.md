@@ -55,9 +55,3 @@
 - `QuoteMux`：主体运行时，负责安装和加载本仓库
 - `MarketHub`：Admin/GUI 壳，调用 `QuoteMux` 的安装能力
 - `QuoteMux_Packages`：提供全部远程 packages 源码
-
-## 说明
-
-- 当前安装粒度固定为整个仓库，不提供单包安装官方入口。
-- 如果未来新增 package，只要保持现有目录结构，`QuoteMux` 就会在安装后动态发现它。
-- `tushare` 相关限速仍由 package 内部逻辑控制，可通过环境变量调整。
