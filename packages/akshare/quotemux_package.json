@@ -76,27 +76,6 @@
       "notes": "接口只返回开市日，闭市日需要由 QuoteMux 派生"
     },
     {
-      "capability_id": "markets.calendar.trading.next",
-      "support_level": "derived",
-      "handler_name": "get_trading_calendar",
-      "mergeable": true,
-      "notes": "基于开市日列表派生"
-    },
-    {
-      "capability_id": "markets.calendar.trading.previous",
-      "support_level": "derived",
-      "handler_name": "get_trading_calendar",
-      "mergeable": true,
-      "notes": "基于开市日列表派生"
-    },
-    {
-      "capability_id": "markets.calendar.trading.yearly",
-      "support_level": "derived",
-      "handler_name": "get_trading_calendar",
-      "mergeable": true,
-      "notes": "基于开市日列表派生年度窗口"
-    },
-    {
       "capability_id": "markets.connect.capital_flow",
       "support_level": "native",
       "handler_name": "get_connect_capital_flow",

@@ -97,27 +97,6 @@
       "notes": ""
     },
     {
-      "capability_id": "markets.calendar.trading.next",
-      "support_level": "native",
-      "handler_name": "get_trading_calendar",
-      "mergeable": true,
-      "notes": ""
-    },
-    {
-      "capability_id": "markets.calendar.trading.previous",
-      "support_level": "native",
-      "handler_name": "get_trading_calendar",
-      "mergeable": true,
-      "notes": ""
-    },
-    {
-      "capability_id": "markets.calendar.trading.yearly",
-      "support_level": "native",
-      "handler_name": "get_trading_calendar",
-      "mergeable": true,
-      "notes": ""
-    },
-    {
       "capability_id": "markets.connect.active_top10",
       "support_level": "native",
       "handler_name": "get_connect_active_top10",
