@@ -510,10 +510,10 @@
   ],
   "config_schema": [
     {
-      "name": "token",
+      "name": "api_key",
       "field_type": "string",
-      "title": "Tushare Token",
-      "description": "Tushare API token",
+      "title": "API Key",
+      "description": "Tushare API key",
       "required": true,
       "default_value": ""
     },
@@ -527,7 +527,7 @@
     }
   ],
   "secret_fields": [
-    "token"
+    "api_key"
   ],
   "supports_multi_instance": true,
   "handler_targets": {

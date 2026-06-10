@@ -8,7 +8,7 @@ import pandas as pd
 
 from quotemux.infra.cache.store import build_cache_path, filter_frame_by_date_range, filter_frame_by_datetime_range, latest_n_rows, merge_cache_frame, plan_missing_ranges, read_cache_frame, write_cache_frame
 from quotemux.infra.config import DATE_FORMAT
-from quotemux.infra.provider_config import get_tushare_token
+from quotemux.infra.provider_config import get_provider_api_key
 from platform_models import AdjFactorItem, BoardCatalogItem, BoardCategoryItem, BoardMemberHistoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, IndexCatalogItem, IndexMemberItem, IndexQuoteItem, MarketCapitalFlowItem, NameHistoryItem, ShareholderChangeItem, StockBasicInfo, StockFinancialStatementItem, StockMoneyFlowItem, StockQuoteItem, TechnicalFactorItem, TradingCalendarItem, TradingSessionItem
 from quotemux.infra.common import INTRADAY_RULES, aggregate_ohlc, add_quote_metrics, build_time_bounds, format_date_value, format_datetime_value, index_code_to_ts, normalize_index_code, normalize_stock_code, stock_code_to_ts
 from .rate_limit import call_tushare_api
@@ -35,15 +35,15 @@ _PRO_BAR_TOKEN_LOCK = threading.Lock()
 
 
 @lru_cache(maxsize=16)
-def _build_ts_pro(token: str):
-    return ts.pro_api(token)
+def _build_ts_pro(api_key: str):
+    return ts.pro_api(api_key)
 
 
 def get_ts_pro():
-    token = get_tushare_token()
-    if ts is None or token == "":
+    api_key = get_provider_api_key()
+    if ts is None or api_key == "":
         return None
-    return _build_ts_pro(token)
+    return _build_ts_pro(api_key)
 
 
 def _normalize_index_market(market: str) -> str:
@@ -759,12 +759,12 @@ def get_index_members(index_code: str, trade_date: str) -> list[IndexMemberItem]
 
 
 def _fetch_stock_quotes_frame(code: str, freq: str, start_dt: datetime | None, end_dt: datetime | None, adjust: str) -> pd.DataFrame:
-    token = get_tushare_token()
-    if ts is None or token == "" or freq == "tick":
+    api_key = get_provider_api_key()
+    if ts is None or api_key == "" or freq == "tick":
         return pd.DataFrame()
     try:
         with _PRO_BAR_TOKEN_LOCK:
-            ts.set_token(token)
+            ts.set_token(api_key)
             df = call_tushare_api(
                 "pro_bar",
                 ts.pro_bar,

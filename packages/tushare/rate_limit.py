@@ -10,7 +10,7 @@ import threading
 import time
 from typing import Callable, TypeVar
 
-from quotemux.infra.config import DATALAKE_ROOT
+from quotemux.infra.config import DATA_ROOT
 from quotemux.infra.provider_runtime.core import call_provider_api
 
 
@@ -20,7 +20,7 @@ DEFAULT_API_RATE_LIMITS = {
     "hm_detail": (1, 3600.0),
 }
 RATE_LIMIT_PERIOD_SECONDS = 60.0
-RATE_LIMIT_STATE_PATH = Path(os.getenv("MHK_TUSHARE_RATE_LIMIT_STATE_PATH", "")) if os.getenv("MHK_TUSHARE_RATE_LIMIT_STATE_PATH", "") else DATALAKE_ROOT / "type=cache" / "service=integration_api" / "provider=tushare" / "rate_limit" / "state.json"
+RATE_LIMIT_STATE_PATH = Path(os.getenv("MHK_TUSHARE_RATE_LIMIT_STATE_PATH", "")) if os.getenv("MHK_TUSHARE_RATE_LIMIT_STATE_PATH", "") else DATA_ROOT / "type=cache" / "service=integration_api" / "provider=tushare" / "rate_limit" / "state.json"
 
 
 def _int_env(name: str, default_value: int) -> int:
