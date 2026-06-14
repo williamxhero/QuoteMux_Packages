@@ -238,6 +238,8 @@ def _frame_to_stock_quotes(df: pd.DataFrame, freq: str) -> list[StockQuoteItem]:
                 volume=float(row["volume"]) if "volume" in row and pd.notna(row["volume"]) else None,
                 amount=float(row["amount"]) if pd.notna(row["amount"]) else None,
                 adjust=str(row["adjust"]),
+                is_suspended=False,
+                is_st=False,
             )
         )
     return items

@@ -63,161 +63,28 @@ def _text_value(value: object) -> str:
     return str(value)
 
 
-def _stock_market(code: str) -> str:
-    normalized = normalize_stock_code(code)
-    if normalized.startswith("6"):
-        return "sh"
-    if normalized.startswith(("4", "8", "9")):
-        return "bj"
-    return "sz"
-
-
-def _em_prefixed_stock_code(code: str) -> str:
-    normalized = normalize_stock_code(code)
-    return f"{_stock_market(normalized)}{normalized}"
-
-
-def _em_secucode(code: str) -> str:
-    normalized = normalize_stock_code(code)
-    suffix = "SH" if _stock_market(normalized) == "sh" else "BJ" if _stock_market(normalized) == "bj" else "SZ"
-    return f"{normalized}.{suffix}"
-
-
-def _date_digits(value: str) -> str:
-    return format_date_value(value).replace("-", "")
-
-
-def _date_in_window(row_date: str, start_date: str, end_date: str) -> bool:
-    if row_date == "":
-        return False
-    if start_date and row_date < start_date:
-        return False
-    if end_date and row_date > end_date:
-        return False
-    return True
-
-
-def _date_range_from_request(date_value: str, start_date: str, end_date: str, lookback_days: int) -> tuple[str, str]:
-    actual_start, actual_end = _date_window(date_value, start_date, end_date, lookback_days)
-    return actual_start, actual_end
-
-
-def _period_candidates(report_period: str, start_period: str, end_period: str) -> list[str]:
-    actual_period = _date_digits(report_period)
-    if actual_period:
-        return [actual_period]
-    actual_start = _date_digits(start_period)
-    actual_end = _date_digits(end_period)
-    if actual_start == "" or actual_end == "":
-        return []
-    start_dt = datetime.strptime(actual_start, "%Y%m%d")
-    end_dt = datetime.strptime(actual_end, "%Y%m%d")
-    quarters = ((3, 31), (6, 30), (9, 30), (12, 31))
-    rows: list[str] = []
-    for year in range(start_dt.year, end_dt.year + 1):
-        for month, day in quarters:
-            current = datetime(year, month, day)
-            if start_dt <= current <= end_dt:
-                rows.append(current.strftime("%Y%m%d"))
-    return rows
-
-
-def _ak_secucode(code: str) -> str:
-    normalized = normalize_stock_code(code)
-    prefix = "SH" if _stock_market(normalized) == "sh" else "BJ" if _stock_market(normalized) == "bj" else "SZ"
-    return f"{prefix}{normalized}"
-
-
-def _ak_period_text(period: str) -> str:
-    digits = _date_digits(period)
-    if digits.endswith("0331"):
-        return f"{digits[:4]}一季"
-    if digits.endswith("0630"):
-        return f"{digits[:4]}半年报"
-    if digits.endswith("0930"):
-        return f"{digits[:4]}三季"
-    return f"{digits[:4]}年报"
-
-
-def _column_value(row: pd.Series, names: tuple[str, ...]) -> object:
+def _quote_bool_flag(row: pd.Series | dict[str, object], *names: str) -> bool:
     for name in names:
-        if name in row:
-            return row.get(name)
-    return None
-
-
-def _board_category_from_code(board_code: str) -> str:
-    text = str(board_code).upper()
-    if text.startswith("BK"):
-        return ""
-    return ""
-
-
-def _load_board_catalog_frame(category: str) -> pd.DataFrame:
-    if category not in BOARD_CATEGORIES:
-        return pd.DataFrame()
-    cache_path = build_cache_path("akshare", ["boards", "catalog"], {"category": category})
-    cache_df = read_cache_frame(cache_path)
-    if cache_df.empty:
-        if category == "concept":
-            fetched_df = _call_ak("stock_board_concept_name_em", ak.stock_board_concept_name_em)
+        if isinstance(row, dict):
+            value = row.get(name)
         else:
-            fetched_df = _call_ak("stock_board_industry_name_em", ak.stock_board_industry_name_em)
-        if fetched_df is not None and not fetched_df.empty:
-            work = fetched_df.copy()
-            work["board_code"] = work["板块代码"].fillna("").astype(str).str.upper()
-            work["board_name"] = work["板块名称"].fillna("").astype(str)
-            work["category"] = category
-            work["status"] = "active"
-            cache_df = work[["board_code", "board_name", "category", "status"]]
-            write_cache_frame(cache_path, cache_df)
-    return cache_df
+            value = row.get(name) if name in row else None
+        if value is None or pd.isna(value):
+            continue
+        text_value = str(value).strip().lower()
+        if text_value in {"1", "true", "y", "yes", "t", "st", "suspended", "halt"}:
+            return True
+        if text_value in {"0", "false", "n", "no", "f", "normal", "trading", "active"}:
+            return False
+        number = pd.to_numeric(value, errors="coerce")
+        if pd.notna(number):
+            return bool(int(number))
+    return False
 
 
-def _load_all_board_catalog_frame() -> pd.DataFrame:
-    frames = [_load_board_catalog_frame(category) for category in BOARD_CATEGORIES]
-    frames = [frame for frame in frames if not frame.empty]
-    if frames == []:
-        return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True).drop_duplicates(subset=["board_code"], keep="last")
-
-
-def _board_row(board_code: str) -> pd.Series | None:
-    normalized = str(board_code).upper()
-    catalog_df = _load_all_board_catalog_frame()
-    if catalog_df.empty:
-        return None
-    matched = catalog_df[catalog_df["board_code"] == normalized]
-    if matched.empty:
-        return None
-    return matched.iloc[0]
-
-
-def _board_symbol_and_category(board_code: str) -> tuple[str, str]:
-    row = _board_row(board_code)
-    if row is None:
-        return str(board_code).upper(), _board_category_from_code(board_code)
-    return str(row["board_name"]), str(row["category"])
-
-
-def _money_text_to_float(value: object) -> float | None:
-    if value is None:
-        return None
-    text = str(value).replace(",", "").strip()
-    if text == "" or text == "--":
-        return None
-    multiplier = 1.0
-    if text.endswith("亿元"):
-        multiplier = 100000000.0
-        text = text[:-2]
-    elif text.endswith("万元"):
-        multiplier = 10000.0
-        text = text[:-2]
-    elif text.endswith("元"):
-        text = text[:-1]
-    number = pd.to_numeric(text, errors="coerce")
-    return float(number) * multiplier if pd.notna(number) else None
-
+def _name_indicates_st(name: str) -> bool:
+    upper_name = name.upper().replace(" ", "")
+    return upper_name.startswith("ST") or upper_name.startswith("*ST")
 
 def _date_window(trade_date: str, start_date: str, end_date: str, lookback_days: int) -> tuple[str, str]:
     actual_trade_date = format_date_value(trade_date)
@@ -367,6 +234,8 @@ def _frame_to_stock_quotes(df: pd.DataFrame, freq: str, adjust: str) -> list[Sto
                 volume=float(row["volume"]) if pd.notna(row["volume"]) else None,
                 amount=float(row["amount"]) if pd.notna(row["amount"]) else None,
                 adjust=adjust,
+                is_suspended=bool(row["is_suspended"]) if "is_suspended" in row and pd.notna(row["is_suspended"]) else False,
+                is_st=bool(row["is_st"]) if "is_st" in row and pd.notna(row["is_st"]) else False,
             )
         )
     return items

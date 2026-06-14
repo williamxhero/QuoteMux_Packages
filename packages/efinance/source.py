@@ -64,6 +64,29 @@ def _text_value(value: object) -> str:
     return str(value)
 
 
+def _quote_bool_flag(row: pd.Series | dict[str, object], *names: str) -> bool:
+    for name in names:
+        if isinstance(row, dict):
+            value = row.get(name)
+        else:
+            value = row.get(name) if name in row else None
+        if value is None or pd.isna(value):
+            continue
+        text_value = str(value).strip().lower()
+        if text_value in {"1", "true", "y", "yes", "t", "st", "suspended", "halt"}:
+            return True
+        if text_value in {"0", "false", "n", "no", "f", "normal", "trading", "active"}:
+            return False
+        number = pd.to_numeric(value, errors="coerce")
+        if pd.notna(number):
+            return bool(int(number))
+    return False
+
+
+def _name_indicates_st(name: str) -> bool:
+    upper_name = name.upper().replace(" ", "")
+    return upper_name.startswith("ST") or upper_name.startswith("*ST")
+
 def _date_window(date_value: str, start_date: str, end_date: str, lookback_days: int) -> tuple[str, str]:
     actual_date = format_date_value(date_value)
     if actual_date:
@@ -209,6 +232,8 @@ def _frame_to_stock_quotes(df: pd.DataFrame, freq: str, adjust: str) -> list[Sto
                 volume=float(row["volume"]) if pd.notna(row["volume"]) else None,
                 amount=float(row["amount"]) if pd.notna(row["amount"]) else None,
                 adjust=adjust,
+                is_suspended=bool(row["is_suspended"]) if "is_suspended" in row and pd.notna(row["is_suspended"]) else False,
+                is_st=bool(row["is_st"]) if "is_st" in row and pd.notna(row["is_st"]) else False,
             )
         )
     return items

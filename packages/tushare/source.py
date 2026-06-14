@@ -109,6 +109,11 @@ def _stock_statuses(list_status: str, include_delisted: bool) -> tuple[str, ...]
     return ("L",)
 
 
+def _name_indicates_st(name: str) -> bool:
+    upper_name = name.upper().replace(" ", "")
+    return upper_name.startswith("ST") or upper_name.startswith("*ST")
+
+
 def _fetch_stock_basic_frame(status: str) -> pd.DataFrame:
     pro = get_ts_pro()
     if pro is None:
@@ -787,7 +792,11 @@ def _fetch_stock_quotes_frame(code: str, freq: str, start_dt: datetime | None, e
     work["freq"] = freq
     work["adjust"] = adjust
     work["volume2"] = work[volume_column] if volume_column in work.columns else None
-    return work[["code", "trade_time", "freq", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume2", "amount", "adjust"]]
+    work["is_suspended"] = False
+    work["is_st"] = False
+    if "name" in work.columns:
+        work["is_st"] = work["name"].fillna("").astype(str).map(_name_indicates_st)
+    return work[["code", "trade_time", "freq", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume2", "amount", "adjust", "is_suspended", "is_st"]]
 
 
 def _fetch_stock_daily_snapshot_frame(trade_date: str) -> pd.DataFrame:
@@ -809,7 +818,9 @@ def _fetch_stock_daily_snapshot_frame(trade_date: str) -> pd.DataFrame:
     for column in ["open", "high", "low", "close", "pre_close", "change", "pct_chg", "amount"]:
         if column not in work.columns:
             work[column] = None
-    return work[["code", "trade_time", "freq", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume2", "amount", "adjust"]]
+    work["is_suspended"] = False
+    work["is_st"] = False
+    return work[["code", "trade_time", "freq", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume2", "amount", "adjust", "is_suspended", "is_st"]]
 
 
 def _frame_to_stock_quotes(df: pd.DataFrame, freq: str) -> list[StockQuoteItem]:
@@ -832,6 +843,8 @@ def _frame_to_stock_quotes(df: pd.DataFrame, freq: str) -> list[StockQuoteItem]:
                 volume=float(row["volume2"]) if pd.notna(row["volume2"]) else None,
                 amount=float(row["amount"]) if pd.notna(row["amount"]) else None,
                 adjust=str(row["adjust"]),
+                is_suspended=bool(row["is_suspended"]) if "is_suspended" in row and pd.notna(row["is_suspended"]) else False,
+                is_st=bool(row["is_st"]) if "is_st" in row and pd.notna(row["is_st"]) else False,
             )
         )
     return items
