@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -13,10 +13,21 @@ from platform_models import AdjFactorItem, BoardCatalogItem, BoardCategoryItem, 
 from quotemux.infra.common import INTRADAY_RULES, aggregate_ohlc, add_quote_metrics, build_time_bounds, format_date_value, format_datetime_value, index_code_to_ts, normalize_index_code, normalize_stock_code, stock_code_to_ts
 from .rate_limit import call_tushare_api
 
+import sys
+_saved_paths = [path for path in sys.path if "quotemux_packages" in path or ("packages" in path and "site-packages" not in path)]
+for path in _saved_paths:
+    try:
+        sys.path.remove(path)
+    except ValueError:
+        pass
+
 try:
     import tushare as ts
 except Exception:
     ts = None
+finally:
+    for path in reversed(_saved_paths):
+        sys.path.insert(0, path)
 
 
 TS_FREQ_MAP = {

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -10,6 +10,14 @@ from quotemux.infra.common import INTRADAY_RULES, add_quote_metrics, aggregate_o
 from quotemux.infra.provider_runtime.core import call_provider_api
 from platform_models import IndexQuoteItem, StockQuoteItem
 
+import sys
+_saved_paths = [path for path in sys.path if "quotemux_packages" in path or ("packages" in path and "site-packages" not in path)]
+for path in _saved_paths:
+    try:
+        sys.path.remove(path)
+    except ValueError:
+        pass
+
 try:
     from opentdx import ADJUST, MARKET, PERIOD, TdxClient
 except Exception:
@@ -17,6 +25,9 @@ except Exception:
     MARKET = None
     PERIOD = None
     TdxClient = None
+finally:
+    for path in reversed(_saved_paths):
+        sys.path.insert(0, path)
 
 
 DEFAULT_LOOKBACK_DAYS = 10

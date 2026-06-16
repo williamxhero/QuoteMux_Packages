@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime, timedelta
 import os
@@ -11,10 +11,21 @@ from quotemux.runtime_core.quality import calibrate_quote_units
 from quotemux.infra.provider_runtime.core import call_provider_api
 from platform_models import IndexMemberItem, IndexQuoteItem, StockQuoteItem
 
+import sys
+_saved_paths = [path for path in sys.path if "quotemux_packages" in path or ("packages" in path and "site-packages" not in path)]
+for path in _saved_paths:
+    try:
+        sys.path.remove(path)
+    except ValueError:
+        pass
+
 try:
     from mootdx.quotes import Quotes
 except Exception:
     Quotes = None
+finally:
+    for path in reversed(_saved_paths):
+        sys.path.insert(0, path)
 
 
 MOOTDX_FREQ_MAP = {

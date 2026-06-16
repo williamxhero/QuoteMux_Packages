@@ -1,14 +1,20 @@
 from __future__ import annotations
-with open("/tmp/akshare_load.log", "a", encoding="utf-8") as _debug_f:
-    import sys
-    _debug_f.write(f"--- Loading akshare source.py ---\n")
-    _debug_f.write(f"sys.path: {sys.path}\n")
+
+import sys
+_saved_paths = [path for path in sys.path if "quotemux_packages" in path or ("packages" in path and "site-packages" not in path)]
+for path in _saved_paths:
     try:
-        import akshare as _ak
-        _debug_f.write(f"imported akshare from: {_ak.__file__}\n")
-        _debug_f.write(f"has stock_zh_index_daily_em: {hasattr(_ak, 'stock_zh_index_daily_em')}\n")
-    except Exception as _e:
-        _debug_f.write(f"import failed: {_e}\n")
+        sys.path.remove(path)
+    except ValueError:
+        pass
+
+try:
+    import akshare as ak
+except Exception:
+    ak = None
+finally:
+    for path in reversed(_saved_paths):
+        sys.path.insert(0, path)
 
 from datetime import datetime, timedelta
 
@@ -34,27 +40,6 @@ from quotemux.infra.common import add_quote_metrics, aggregate_ohlc, build_time_
 from quotemux.runtime_core.quality import build_akshare_index_symbol, calibrate_quote_units
 from quotemux.infra.provider_runtime.core import call_provider_api
 from platform_models import BlockTradeItem, BoardCatalogItem, BoardCategoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, ConnectCapitalFlowItem, DisclosureDateItem, DividendItem, DragonTigerInstitutionItem, DragonTigerItem, ExpressItem, ForecastItem, HKConnectHoldingItem, IndexMemberItem, IndexQuoteItem, MainBusinessItem, MarketCapitalFlowItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockFinanceIndicatorItem, StockFinancialStatementItem, StockMoneyFlowItem, StockProfileItem, StockQuoteItem, SurveyItem, TradingCalendarItem, UnlockScheduleItem
-
-import sys
-_saved_paths = [path for path in sys.path if ("quotemux_packages" in path or "packages" in path) and "site-packages" not in path]
-for path in _saved_paths:
-    try:
-        sys.path.remove(path)
-    except ValueError:
-        pass
-
-try:
-    import akshare as ak
-    if ak is not None and not hasattr(ak, "stock_board_concept_name_em"):
-        import sys
-        print(f"[Warning] 导入的 akshare 缺少属性，导入路径为: {getattr(ak, '__file__', 'unknown')}, sys.path: {sys.path}", file=sys.stderr)
-except Exception as e:
-    import sys
-    print(f"[Error] 导入 akshare 报错: {e}, sys.path: {sys.path}", file=sys.stderr)
-    ak = None
-finally:
-    for path in reversed(_saved_paths):
-        sys.path.insert(0, path)
 
 
 DEFAULT_LOOKBACK_DAYS = 30
