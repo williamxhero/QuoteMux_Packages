@@ -11,7 +11,7 @@ from quotemux.infra.provider_runtime.core import call_provider_api
 from platform_models import BlockTradeItem, BoardCatalogItem, BoardCategoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, ConnectCapitalFlowItem, DisclosureDateItem, DividendItem, DragonTigerInstitutionItem, DragonTigerItem, ExpressItem, ForecastItem, HKConnectHoldingItem, IndexMemberItem, IndexQuoteItem, MainBusinessItem, MarketCapitalFlowItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockFinanceIndicatorItem, StockFinancialStatementItem, StockMoneyFlowItem, StockProfileItem, StockQuoteItem, SurveyItem, TradingCalendarItem, UnlockScheduleItem
 
 import sys
-_saved_paths = [path for path in sys.path if "quotemux_packages" in path or "packages" in path]
+_saved_paths = [path for path in sys.path if ("quotemux_packages" in path or "packages" in path) and "site-packages" not in path]
 for path in _saved_paths:
     try:
         sys.path.remove(path)
