@@ -1,4 +1,14 @@
 from __future__ import annotations
+with open("/tmp/akshare_load.log", "a", encoding="utf-8") as _debug_f:
+    import sys
+    _debug_f.write(f"--- Loading akshare source.py ---\n")
+    _debug_f.write(f"sys.path: {sys.path}\n")
+    try:
+        import akshare as _ak
+        _debug_f.write(f"imported akshare from: {_ak.__file__}\n")
+        _debug_f.write(f"has stock_zh_index_daily_em: {hasattr(_ak, 'stock_zh_index_daily_em')}\n")
+    except Exception as _e:
+        _debug_f.write(f"import failed: {_e}\n")
 
 from datetime import datetime, timedelta
 
