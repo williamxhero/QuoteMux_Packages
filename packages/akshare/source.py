@@ -35,7 +35,12 @@ for path in _saved_paths:
 
 try:
     import akshare as ak
-except Exception:
+    if ak is not None and not hasattr(ak, "stock_board_concept_name_em"):
+        import sys
+        print(f"[Warning] 导入的 akshare 缺少属性，导入路径为: {getattr(ak, '__file__', 'unknown')}, sys.path: {sys.path}", file=sys.stderr)
+except Exception as e:
+    import sys
+    print(f"[Error] 导入 akshare 报错: {e}, sys.path: {sys.path}", file=sys.stderr)
     ak = None
 finally:
     for path in reversed(_saved_paths):
