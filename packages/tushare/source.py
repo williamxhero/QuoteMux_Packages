@@ -14,7 +14,7 @@ from quotemux.infra.common import INTRADAY_RULES, aggregate_ohlc, add_quote_metr
 from .rate_limit import call_tushare_api
 
 import sys
-_saved_paths = [path for path in sys.path if "quotemux_packages" in path or ("packages" in path and "site-packages" not in path)]
+_saved_paths = [path for path in sys.path if "quotemux_packages" in path or ("packages" in path and "site-packages" not in path and "dist-packages" not in path)]
 for path in _saved_paths:
     try:
         sys.path.remove(path)

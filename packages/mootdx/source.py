@@ -12,7 +12,7 @@ from quotemux.infra.provider_runtime.core import call_provider_api
 from platform_models import IndexMemberItem, IndexQuoteItem, StockQuoteItem
 
 import sys
-_saved_paths = [path for path in sys.path if "quotemux_packages" in path or ("packages" in path and "site-packages" not in path)]
+_saved_paths = [path for path in sys.path if "quotemux_packages" in path or ("packages" in path and "site-packages" not in path and "dist-packages" not in path)]
 for path in _saved_paths:
     try:
         sys.path.remove(path)
