@@ -10,10 +10,21 @@ from quotemux.runtime_core.quality import build_akshare_index_symbol, calibrate_
 from quotemux.infra.provider_runtime.core import call_provider_api
 from platform_models import BlockTradeItem, BoardCatalogItem, BoardCategoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, ConnectCapitalFlowItem, DisclosureDateItem, DividendItem, DragonTigerInstitutionItem, DragonTigerItem, ExpressItem, ForecastItem, HKConnectHoldingItem, IndexMemberItem, IndexQuoteItem, MainBusinessItem, MarketCapitalFlowItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockFinanceIndicatorItem, StockFinancialStatementItem, StockMoneyFlowItem, StockProfileItem, StockQuoteItem, SurveyItem, TradingCalendarItem, UnlockScheduleItem
 
+import sys
+_saved_paths = [path for path in sys.path if "quotemux_packages" in path or "packages" in path]
+for path in _saved_paths:
+    try:
+        sys.path.remove(path)
+    except ValueError:
+        pass
+
 try:
     import akshare as ak
 except Exception:
     ak = None
+finally:
+    for path in reversed(_saved_paths):
+        sys.path.insert(0, path)
 
 
 DEFAULT_LOOKBACK_DAYS = 30
