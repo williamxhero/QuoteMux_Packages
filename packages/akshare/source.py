@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime, timedelta
 
@@ -370,6 +370,27 @@ def get_trading_calendar(exchange: str, start_date: str, end_date: str, is_open:
             )
         )
     return items
+
+
+def _load_board_catalog_frame(category: str) -> pd.DataFrame:
+    if category not in BOARD_CATEGORIES:
+        return pd.DataFrame()
+    cache_path = build_cache_path("akshare", ["boards", "catalog"], {"category": category})
+    cache_df = read_cache_frame(cache_path)
+    if cache_df.empty:
+        if category == "concept":
+            fetched_df = _call_ak("stock_board_concept_name_em", ak.stock_board_concept_name_em)
+        else:
+            fetched_df = _call_ak("stock_board_industry_name_em", ak.stock_board_industry_name_em)
+        if fetched_df is not None and not fetched_df.empty:
+            work = fetched_df.copy()
+            work["board_code"] = work["板块代码"].fillna("").astype(str).str.upper()
+            work["board_name"] = work["板块名称"].fillna("").astype(str)
+            work["category"] = category
+            work["status"] = "active"
+            cache_df = work[["board_code", "board_name", "category", "status"]]
+            write_cache_frame(cache_path, cache_df)
+    return cache_df
 
 
 def get_board_catalog(category: str, market: str, status: str, limit: int, offset: int) -> list[BoardCatalogItem]:
