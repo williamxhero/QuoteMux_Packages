@@ -397,8 +397,14 @@ def get_board_catalog(category: str, market: str, status: str, limit: int, offse
     if market and market != "a_share":
         return []
     actual_categories = (category,) if category in BOARD_CATEGORIES else BOARD_CATEGORIES
-    frames = [_load_board_catalog_frame(item) for item in actual_categories]
-    frames = [frame for frame in frames if not frame.empty]
+    frames = []
+    for item in actual_categories:
+        try:
+            frame = _load_board_catalog_frame(item)
+            if frame is not None and not frame.empty:
+                frames.append(frame)
+        except Exception:
+            pass
     if frames == []:
         return []
     work = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["board_code"], keep="last")
