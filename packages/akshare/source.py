@@ -3,6 +3,21 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import pandas as pd
+import re
+import requests.adapters
+
+_original_send = requests.adapters.HTTPAdapter.send
+
+def _patched_send(self, request, **kwargs):
+    if request.url:
+        new_url = re.sub(r'https://\d+\.push2\.eastmoney\.com', 'https://push2.eastmoney.com', request.url)
+        if new_url != request.url:
+            request.url = new_url
+            if 'Host' in request.headers:
+                request.headers['Host'] = 'push2.eastmoney.com'
+    return _original_send(self, request, **kwargs)
+
+requests.adapters.HTTPAdapter.send = _patched_send
 
 from quotemux.infra.cache.store import build_cache_path, filter_frame_by_date_range, filter_frame_by_datetime_range, latest_n_rows, merge_cache_frame, read_cache_frame, write_cache_frame
 from quotemux.infra.common import add_quote_metrics, aggregate_ohlc, build_time_bounds, format_date_value, format_datetime_value, normalize_index_code, normalize_stock_code
