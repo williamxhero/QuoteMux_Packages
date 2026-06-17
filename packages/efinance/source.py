@@ -8,7 +8,7 @@ from quotemux.infra.cache.store import build_cache_path, filter_frame_by_date_ra
 from quotemux.infra.common import build_time_bounds, format_date_value, format_datetime_value, normalize_index_code, normalize_stock_code
 from quotemux.runtime_core.quality import calibrate_quote_units
 from quotemux.infra.provider_runtime.core import call_provider_api
-from platform_models import DragonTigerItem, ExpressItem, ShareholderCountItem, StockFinanceIndicatorItem, IndexMemberItem, IndexQuoteItem, StockQuoteItem
+from platform_models import BoardQuoteItem, DragonTigerItem, ExpressItem, ShareholderCountItem, StockFinanceIndicatorItem, IndexMemberItem, IndexQuoteItem, StockQuoteItem
 
 import sys
 _saved_paths = [path for path in sys.path if "quotemux_packages" in path or ("packages" in path and "site-packages" not in path and "dist-packages" not in path)]
@@ -219,6 +219,34 @@ def _fetch_index_history_frame(index_code: str, freq: str, start_dt: datetime, e
     return work.drop_duplicates(subset=["index_code", "trade_time", "freq"], keep="last").sort_values("trade_time").reset_index(drop=True)
 
 
+def _fetch_board_history_frame(board_code: str, start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
+    result = _call_ef("stock.get_history_bill", ef.stock.get_history_bill, board_code)
+    if result is None or result.empty:
+        return pd.DataFrame()
+    work = result.copy()
+    for column in ["日期", "收盘价", "涨跌幅"]:
+        if column not in work.columns:
+            return pd.DataFrame()
+    work["board_code"] = str(board_code).upper()
+    work["trade_time"] = pd.to_datetime(work["日期"], errors="coerce")
+    work["freq"] = "1d"
+    work["close"] = pd.to_numeric(work["收盘价"], errors="coerce")
+    work["pct_chg"] = pd.to_numeric(work["涨跌幅"], errors="coerce")
+    valid_pct = work["pct_chg"].notna() & (work["pct_chg"] != -100)
+    work["pre_close"] = pd.NA
+    work.loc[valid_pct, "pre_close"] = work.loc[valid_pct, "close"] / (1 + work.loc[valid_pct, "pct_chg"] / 100)
+    work["change"] = work["close"] - work["pre_close"]
+    work["open"] = pd.NA
+    work["high"] = pd.NA
+    work["low"] = pd.NA
+    work["volume"] = pd.NA
+    work["amount"] = pd.NA
+    work = work[["board_code", "trade_time", "freq", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume", "amount"]]
+    work = work.dropna(subset=["trade_time"])
+    work = work[(work["trade_time"] >= start_dt) & (work["trade_time"] <= end_dt)]
+    return work.drop_duplicates(subset=["board_code", "trade_time", "freq"], keep="last").sort_values("trade_time").reset_index(drop=True)
+
+
 def _frame_to_stock_quotes(df: pd.DataFrame, freq: str, adjust: str) -> list[StockQuoteItem]:
     items: list[StockQuoteItem] = []
     if df.empty:
@@ -278,6 +306,30 @@ def _frame_to_index_quotes(df: pd.DataFrame, freq: str) -> list[IndexQuoteItem]:
     return items
 
 
+def _frame_to_board_quotes(df: pd.DataFrame) -> list[BoardQuoteItem]:
+    items: list[BoardQuoteItem] = []
+    if df.empty:
+        return items
+    for _, row in df.sort_values("trade_time").iterrows():
+        items.append(
+            BoardQuoteItem(
+                board_code=str(row["board_code"]),
+                trade_time=format_datetime_value(row["trade_time"], "1d"),
+                freq="1d",
+                open=float(row["open"]) if pd.notna(row["open"]) else None,
+                high=float(row["high"]) if pd.notna(row["high"]) else None,
+                low=float(row["low"]) if pd.notna(row["low"]) else None,
+                close=float(row["close"]) if pd.notna(row["close"]) else None,
+                pre_close=float(row["pre_close"]) if pd.notna(row["pre_close"]) else None,
+                change=float(row["change"]) if pd.notna(row["change"]) else None,
+                pct_chg=float(row["pct_chg"]) if pd.notna(row["pct_chg"]) else None,
+                volume=float(row["volume"]) if pd.notna(row["volume"]) else None,
+                amount=float(row["amount"]) if pd.notna(row["amount"]) else None,
+            )
+        )
+    return items
+
+
 def get_stock_quotes(
     codes: list[str],
     freq: str,
@@ -306,6 +358,29 @@ def get_stock_quotes(
         filtered_df = filter_frame_by_datetime_range(cache_df, "trade_time", start_dt, end_dt)
         filtered_df = latest_n_rows(filtered_df, "trade_time", count)
         items.extend(_frame_to_stock_quotes(filtered_df, freq, adjust))
+    return items
+
+
+def get_board_quotes(board_codes: list[str], freq: str, trade_date: str, start_date: str, end_date: str, start_time: str, end_time: str, count: int | None) -> list[BoardQuoteItem]:
+    del start_time
+    del end_time
+    if freq != "1d":
+        return []
+    start_dt, end_dt = _resolve_time_window(trade_date, start_date, end_date, "", "", count, False)
+    items: list[BoardQuoteItem] = []
+    for board_code in board_codes:
+        normalized_code = str(board_code).upper()
+        cache_path = build_cache_path("efinance", ["boards", "quotes"], {"board_code": normalized_code, "freq": freq})
+        cache_df = read_cache_frame(cache_path)
+        filtered_cache = filter_frame_by_datetime_range(cache_df, "trade_time", start_dt, end_dt)
+        if filtered_cache.empty or (count and len(filtered_cache) < count):
+            fetched_df = _fetch_board_history_frame(normalized_code, start_dt, end_dt)
+            if not fetched_df.empty:
+                cache_df = merge_cache_frame(cache_df, fetched_df, ["board_code", "trade_time", "freq"], ["trade_time"])
+                write_cache_frame(cache_path, cache_df)
+        filtered_df = filter_frame_by_datetime_range(cache_df, "trade_time", start_dt, end_dt)
+        filtered_df = latest_n_rows(filtered_df, "trade_time", count)
+        items.extend(_frame_to_board_quotes(filtered_df))
     return items
 
 

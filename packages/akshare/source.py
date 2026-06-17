@@ -16,6 +16,11 @@ finally:
     for path in reversed(_saved_paths):
         sys.path.insert(0, path)
 
+try:
+    from curl_cffi import requests as curl_requests
+except Exception:
+    curl_requests = None
+
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -124,6 +129,32 @@ def _date_window(trade_date: str, start_date: str, end_date: str, lookback_days:
     return actual_start, actual_end
 
 
+def _date_range_from_request(trade_date: str, start_date: str, end_date: str, lookback_days: int) -> tuple[str, str]:
+    return _date_window(trade_date, start_date, end_date, lookback_days)
+
+
+def _date_in_window(value: str, start_value: str, end_value: str) -> bool:
+    actual_value = format_date_value(value)
+    actual_start = format_date_value(start_value)
+    actual_end = format_date_value(end_value)
+    if actual_value == "":
+        return False
+    if actual_start and actual_value < actual_start:
+        return False
+    if actual_end and actual_value > actual_end:
+        return False
+    return True
+
+
+def _stock_market(code: str) -> str:
+    normalized_code = normalize_stock_code(code)
+    if normalized_code.startswith("6"):
+        return "sh"
+    if normalized_code.startswith(("4", "8")):
+        return "bj"
+    return "sz"
+
+
 def _resolve_time_window(
     trade_date: str,
     start_date: str,
@@ -202,11 +233,9 @@ def _fetch_stock_intraday_frame(code: str, freq: str, start_dt: datetime, end_dt
 
 def _fetch_index_daily_frame(index_code: str, freq: str, start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
     result = _call_ak(
-        "stock_zh_index_daily_em",
-        ak.stock_zh_index_daily_em,
+        "stock_zh_index_daily",
+        ak.stock_zh_index_daily,
         symbol=build_akshare_index_symbol(index_code),
-        start_date=start_dt.strftime("%Y%m%d"),
-        end_date=end_dt.strftime("%Y%m%d"),
     )
     if result is None or result.empty:
         return pd.DataFrame()
@@ -218,10 +247,16 @@ def _fetch_index_daily_frame(index_code: str, freq: str, start_dt: datetime, end
     work["high"] = pd.to_numeric(work["high"], errors="coerce")
     work["low"] = pd.to_numeric(work["low"], errors="coerce")
     work["close"] = pd.to_numeric(work["close"], errors="coerce")
+    if "volume" not in work.columns:
+        work["volume"] = pd.NA
     work["volume"] = pd.to_numeric(work["volume"], errors="coerce")
-    work["amount"] = pd.to_numeric(work["amount"], errors="coerce")
+    work["amount"] = pd.NA
     work = work[["index_code", "trade_time", "freq", "open", "high", "low", "close", "volume", "amount"]]
     work = work.dropna(subset=["trade_time"])
+    request_start_dt = start_dt
+    if _is_single_day_window(request_start_dt, end_dt):
+        request_start_dt = request_start_dt - timedelta(days=10)
+    work = work[(work["trade_time"] >= request_start_dt) & (work["trade_time"] <= end_dt)]
     work, _ = calibrate_quote_units(work)
     if freq == "1w":
         work = work.set_index("trade_time").resample("W-FRI", label="left", closed="left").agg({"index_code": "last", "freq": "last", "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum", "amount": "sum"}).reset_index()
@@ -291,6 +326,18 @@ def _frame_to_index_quotes(df: pd.DataFrame, freq: str) -> list[IndexQuoteItem]:
     return items
 
 
+def _tail_request_window(start_dt: datetime, end_dt: datetime, count: int | None) -> tuple[datetime, datetime]:
+    if count:
+        return start_dt, end_dt
+    if start_dt.date() == end_dt.date():
+        return start_dt - timedelta(days=10), end_dt
+    return start_dt, end_dt
+
+
+def _is_single_day_window(start_dt: datetime, end_dt: datetime) -> bool:
+    return start_dt.date() == end_dt.date()
+
+
 def get_stock_quotes(
     codes: list[str],
     freq: str,
@@ -328,19 +375,32 @@ def get_stock_quotes(
 def get_index_quotes(index_codes: list[str], freq: str, trade_date: str, start_date: str, end_date: str, count: int | None) -> list[IndexQuoteItem]:
     start_dt, end_dt = _resolve_time_window(trade_date, start_date, end_date, "", "", count, False)
     items: list[IndexQuoteItem] = []
+    request_count = (count + 1) if count else (2 if _is_single_day_window(start_dt, end_dt) else None)
+    fetch_start_dt, fetch_end_dt = _tail_request_window(start_dt, end_dt, count)
     for index_code in index_codes:
         normalized_code = normalize_index_code(index_code)
         cache_path = build_cache_path("akshare", ["indexes", "quotes"], {"index_code": normalized_code, "freq": freq})
         cache_df = read_cache_frame(cache_path)
         filtered_cache = filter_frame_by_datetime_range(cache_df, "trade_time", start_dt, end_dt)
-        if filtered_cache.empty or (count and len(filtered_cache) < count):
-            fetched_df = _fetch_index_daily_frame(normalized_code, freq, start_dt, end_dt)
+        if filtered_cache.empty or (request_count and len(filtered_cache) < request_count):
+            fetched_df = _fetch_index_daily_frame(normalized_code, freq, fetch_start_dt, fetch_end_dt)
             if not fetched_df.empty:
                 cache_df = merge_cache_frame(cache_df, fetched_df, ["index_code", "trade_time", "freq"], ["trade_time"])
                 write_cache_frame(cache_path, cache_df)
         filtered_df = filter_frame_by_datetime_range(cache_df, "trade_time", start_dt, end_dt)
-        filtered_df = latest_n_rows(filtered_df, "trade_time", count)
-        items.extend(_frame_to_index_quotes(filtered_df, freq))
+        if request_count and start_dt is not None and not cache_df.empty:
+            cache_times = pd.to_datetime(cache_df["trade_time"], errors="coerce")
+            previous_df = cache_df[cache_times < start_dt]
+            previous_df = latest_n_rows(previous_df, "trade_time", 1)
+            if not previous_df.empty:
+                filtered_df = merge_cache_frame(previous_df, filtered_df, ["index_code", "trade_time", "freq"], ["trade_time"])
+        filtered_df = latest_n_rows(filtered_df, "trade_time", request_count)
+        quote_items = _frame_to_index_quotes(filtered_df, freq)
+        if _is_single_day_window(start_dt, end_dt):
+            quote_items = [item for item in quote_items if item.trade_time == start_dt.strftime("%Y-%m-%d")]
+        if count:
+            quote_items = quote_items[-count:]
+        items.extend(quote_items)
     return items
 
 
@@ -415,6 +475,33 @@ def _load_board_catalog_frame(category: str) -> pd.DataFrame:
     return cache_df
 
 
+def _board_row(board_code: str) -> pd.Series | None:
+    normalized_code = str(board_code).upper()
+    if normalized_code == "":
+        return None
+    for category in BOARD_CATEGORIES:
+        try:
+            catalog_df = _load_board_catalog_frame(category)
+        except Exception:
+            continue
+        if catalog_df.empty:
+            continue
+        matched = catalog_df[catalog_df["board_code"].astype(str).str.upper() == normalized_code]
+        if matched.empty:
+            continue
+        return matched.iloc[0]
+    return None
+
+
+def _board_symbol_and_category(board_code: str) -> tuple[str, str]:
+    row = _board_row(board_code)
+    if row is None:
+        return "", ""
+    board_name = _text_value(row.get("board_name"))
+    category = _text_value(row.get("category"))
+    return board_name, category
+
+
 def get_board_catalog(category: str, market: str, status: str, limit: int, offset: int) -> list[BoardCatalogItem]:
     if market and market != "a_share":
         return []
@@ -473,14 +560,19 @@ def get_board_categories(parent_code: str, level: int | None) -> list[BoardCateg
 def get_board_members(board_code: str, trade_date: str) -> list[BoardMemberItem]:
     del trade_date
     normalized = str(board_code).upper()
-    _, category = _board_symbol_and_category(normalized)
-    if category == "concept":
-        result = _call_ak("stock_board_concept_cons_em", ak.stock_board_concept_cons_em, symbol=normalized)
-    elif category == "industry":
-        result = _call_ak("stock_board_industry_cons_em", ak.stock_board_industry_cons_em, symbol=normalized)
-    else:
-        return []
-    if result is None or result.empty:
+    result = pd.DataFrame()
+    for api_name, func in (
+        ("stock_board_concept_cons_em", ak.stock_board_concept_cons_em),
+        ("stock_board_industry_cons_em", ak.stock_board_industry_cons_em),
+    ):
+        try:
+            current = _call_ak(api_name, func, symbol=normalized)
+        except Exception:
+            continue
+        if current is not None and not current.empty:
+            result = current
+            break
+    if result.empty:
         return []
     items: list[BoardMemberItem] = []
     for _, row in result.iterrows():
@@ -501,32 +593,39 @@ def get_board_members(board_code: str, trade_date: str) -> list[BoardMemberItem]
 
 def _fetch_board_quote_frame(board_code: str, freq: str, start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
     normalized = str(board_code).upper()
-    symbol, category = _board_symbol_and_category(normalized)
     if freq not in BOARD_FREQ_MAP:
         return pd.DataFrame()
-    if category == "concept":
-        result = _call_ak(
-            "stock_board_concept_hist_em",
-            ak.stock_board_concept_hist_em,
-            symbol=symbol,
-            period=BOARD_FREQ_MAP[freq][0],
-            start_date=start_dt.strftime("%Y%m%d"),
-            end_date=end_dt.strftime("%Y%m%d"),
-            adjust="",
-        )
-    elif category == "industry":
-        result = _call_ak(
-            "stock_board_industry_hist_em",
-            ak.stock_board_industry_hist_em,
-            symbol=symbol,
-            start_date=start_dt.strftime("%Y%m%d"),
-            end_date=end_dt.strftime("%Y%m%d"),
-            period=BOARD_FREQ_MAP[freq][1],
-            adjust="",
-        )
-    else:
+    symbol, category = _board_symbol_and_category(normalized)
+    if symbol == "" or category == "":
         return pd.DataFrame()
-    if result is None or result.empty:
+    request_start_dt = start_dt
+    if request_start_dt == end_dt:
+        request_start_dt = request_start_dt - timedelta(days=10)
+    result = pd.DataFrame()
+    try:
+        if category == "concept":
+            result = _call_ak(
+                "stock_board_concept_hist_em",
+                ak.stock_board_concept_hist_em,
+                symbol=symbol,
+                period=BOARD_FREQ_MAP[freq][0],
+                start_date=request_start_dt.strftime("%Y%m%d"),
+                end_date=end_dt.strftime("%Y%m%d"),
+                adjust="",
+            )
+        else:
+            result = _call_ak(
+                "stock_board_industry_hist_em",
+                ak.stock_board_industry_hist_em,
+                symbol=symbol,
+                start_date=request_start_dt.strftime("%Y%m%d"),
+                end_date=end_dt.strftime("%Y%m%d"),
+                period=BOARD_FREQ_MAP[freq][1],
+                adjust="",
+            )
+    except Exception:
+        return pd.DataFrame()
+    if result.empty:
         return pd.DataFrame()
     work = result.copy()
     work["board_code"] = normalized
@@ -550,24 +649,35 @@ def get_board_quotes(board_codes: list[str], freq: str, trade_date: str, start_d
         return []
     start_dt, end_dt = _resolve_time_window(trade_date, start_date, end_date, "", "", count, False)
     items: list[BoardQuoteItem] = []
+    request_count = (count + 1) if count else (2 if _is_single_day_window(start_dt, end_dt) else None)
     for board_code in board_codes:
         normalized = str(board_code).upper()
         cache_path = build_cache_path("akshare", ["boards", "quotes"], {"board_code": normalized, "freq": freq})
         cache_df = read_cache_frame(cache_path)
         filtered_cache = filter_frame_by_datetime_range(cache_df, "trade_time", start_dt, end_dt)
-        if filtered_cache.empty or (count and len(filtered_cache) < count):
+        if filtered_cache.empty or (request_count and len(filtered_cache) < request_count):
             fetched_df = _fetch_board_quote_frame(normalized, freq, start_dt, end_dt)
             if not fetched_df.empty:
                 cache_df = merge_cache_frame(cache_df, fetched_df, ["board_code", "trade_time", "freq"], ["trade_time"])
                 write_cache_frame(cache_path, cache_df)
         filtered_df = filter_frame_by_datetime_range(cache_df, "trade_time", start_dt, end_dt)
-        filtered_df = latest_n_rows(filtered_df, "trade_time", count)
+        if request_count and not cache_df.empty:
+            cache_times = pd.to_datetime(cache_df["trade_time"], errors="coerce")
+            previous_df = cache_df[cache_times < start_dt]
+            previous_df = latest_n_rows(previous_df, "trade_time", 1)
+            if not previous_df.empty:
+                filtered_df = merge_cache_frame(previous_df, filtered_df, ["board_code", "trade_time", "freq"], ["trade_time"])
+        filtered_df = latest_n_rows(filtered_df, "trade_time", request_count)
         if filtered_df.empty:
             continue
         work = filtered_df.sort_values("trade_time").copy()
         work["pre_close"] = work["close"].shift(1)
         work["change"] = work["close"] - work["pre_close"]
         work["pct_chg"] = work["change"] / work["pre_close"] * 100
+        if _is_single_day_window(start_dt, end_dt):
+            work = work[work["trade_time"].dt.strftime("%Y-%m-%d") == start_dt.strftime("%Y-%m-%d")]
+        if count:
+            work = latest_n_rows(work, "trade_time", count)
         for _, row in work.iterrows():
             items.append(
                 BoardQuoteItem(
@@ -796,7 +906,45 @@ def get_dragon_tiger_institutions(trade_date: str, start_date: str, end_date: st
 def get_stock_money_flow(code: str, trade_date: str, start_date: str, end_date: str, view: str) -> list[StockMoneyFlowItem]:
     normalized_code = normalize_stock_code(code)
     actual_start, actual_end = _date_range_from_request(trade_date, start_date, end_date, 120)
-    result = _call_ak("stock_individual_fund_flow", ak.stock_individual_fund_flow, stock=normalized_code, market=_stock_market(normalized_code))
+    if curl_requests is None:
+        result = _call_ak("stock_individual_fund_flow", ak.stock_individual_fund_flow, stock=normalized_code, market=_stock_market(normalized_code))
+    else:
+        market_map = {"sh": 1, "sz": 0, "bj": 0}
+        response = curl_requests.get(
+            "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get",
+            params={
+                "lmt": "0",
+                "klt": "101",
+                "secid": f"{market_map[_stock_market(normalized_code)]}.{normalized_code}",
+                "fields1": "f1,f2,f3,f7",
+                "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65",
+                "ut": "b2884a393a59ad64002292a3e90d46a5",
+            },
+            impersonate="chrome",
+        )
+        data = response.json().get("data", {}) if response.status_code == 200 else {}
+        klines = data.get("klines", [])
+        if klines == []:
+            result = pd.DataFrame()
+        else:
+            result = pd.DataFrame([item.split(",") for item in klines])
+            result.columns = [
+                "日期",
+                "主力净流入-净额",
+                "小单净流入-净额",
+                "中单净流入-净额",
+                "大单净流入-净额",
+                "超大单净流入-净额",
+                "主力净流入-净占比",
+                "小单净流入-净占比",
+                "中单净流入-净占比",
+                "大单净流入-净占比",
+                "超大单净流入-净占比",
+                "收盘价",
+                "涨跌幅",
+                "_unused1",
+                "_unused2",
+            ]
     if result is None or result.empty:
         return []
     actual_view = view if view else "main"
