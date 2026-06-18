@@ -28,6 +28,17 @@ def _trading_calendar_request(exchange: str, start_date: str, end_date: str, is_
     return TradingCalendarRequest(exchange=exchange, start_date=start_date, end_date=end_date, is_open=is_open)
 
 
+def _offset_date_text(trade_date: str, days: int) -> str:
+    from datetime import timedelta
+
+    from quotemux.infra.common import parse_date_text
+
+    trade_day = parse_date_text(trade_date)
+    if trade_day is None:
+        return ""
+    return (trade_day + timedelta(days=days)).strftime("%Y-%m-%d")
+
+
 def _stock_quotes_request(
     code: str,
     freq: str,
@@ -189,7 +200,8 @@ def get_hl_signal(code: str, trade_date: str, start_date: str, end_date: str) ->
 
 
 def get_previous_trading_days(exchange: str, trade_date: str, n: int) -> list[TradingCalendarItem]:
-    items = _quote_mux().markets.get_trading_calendar(_trading_calendar_request(exchange, "", trade_date, True))
+    start_date = _offset_date_text(trade_date, -max(n * 8, 30))
+    items = _quote_mux().markets.get_trading_calendar(_trading_calendar_request(exchange, start_date, trade_date, True))
     return [item for item in items if item.trade_date < trade_date][-n:]
 
 
