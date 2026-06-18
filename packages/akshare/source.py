@@ -797,6 +797,8 @@ def get_connect_capital_flow(trade_date: str, start_date: str, end_date: str) ->
     actual_start, actual_end = _date_window(trade_date, start_date, end_date, 120)
     market_symbols = {
         "northbound": "北向资金",
+        "sh_connect": "沪股通",
+        "sz_connect": "深股通",
         "southbound": "南向资金",
         "sh_hk": "港股通沪",
         "sz_hk": "港股通深",
@@ -819,7 +821,37 @@ def get_connect_capital_flow(trade_date: str, start_date: str, end_date: str) ->
                     net_amount=_float_value(row.get("当日成交净买额")),
                 )
             )
-    return sorted(items, key=lambda item: (item.trade_date, item.market))
+    return sorted(_with_akshare_northbound_totals(items), key=lambda item: (item.trade_date, item.market))
+
+
+def _with_akshare_northbound_totals(items: list[ConnectCapitalFlowItem]) -> list[ConnectCapitalFlowItem]:
+    keyed_items = {(item.trade_date, item.market): item for item in items}
+    dates = sorted({item.trade_date for item in items})
+    for trade_date in dates:
+        existing = keyed_items.get((trade_date, "northbound"))
+        if existing is not None and existing.buy_amount is not None and existing.sell_amount is not None and existing.net_amount is not None:
+            continue
+        sh_item = keyed_items.get((trade_date, "sh_connect"))
+        sz_item = keyed_items.get((trade_date, "sz_connect"))
+        if sh_item is None or sz_item is None:
+            continue
+        buy_amount = _sum_optional_values(sh_item.buy_amount, sz_item.buy_amount)
+        sell_amount = _sum_optional_values(sh_item.sell_amount, sz_item.sell_amount)
+        net_amount = _sum_optional_values(sh_item.net_amount, sz_item.net_amount)
+        keyed_items[(trade_date, "northbound")] = ConnectCapitalFlowItem(
+            trade_date=trade_date,
+            market="northbound",
+            buy_amount=buy_amount,
+            sell_amount=sell_amount,
+            net_amount=net_amount,
+        )
+    return list(keyed_items.values())
+
+
+def _sum_optional_values(first: float | None, second: float | None) -> float | None:
+    if first is None or second is None:
+        return None
+    return first + second
 
 
 def get_block_trades(trade_date: str, start_date: str, end_date: str, code: str, limit: int) -> list[BlockTradeItem]:

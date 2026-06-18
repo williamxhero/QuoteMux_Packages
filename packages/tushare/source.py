@@ -1193,10 +1193,9 @@ def _fetch_market_capital_flow_frame(start_value: str, end_value: str) -> pd.Dat
     work["market"] = "all"
     work["main_inflow"] = None
     work["main_outflow"] = None
-    if "buy_elg_amount" in work.columns and "buy_lg_amount" in work.columns:
-        net_large = work["buy_elg_amount"].fillna(0) + work["buy_lg_amount"].fillna(0)
-        work["main_inflow"] = net_large.where(net_large > 0)
-        work["main_outflow"] = (-net_large).where(net_large < 0)
+    if {"buy_elg_amount", "buy_lg_amount", "sell_elg_amount", "sell_lg_amount"}.issubset(work.columns):
+        work["main_inflow"] = work["buy_elg_amount"].fillna(0) + work["buy_lg_amount"].fillna(0)
+        work["main_outflow"] = work["sell_elg_amount"].fillna(0) + work["sell_lg_amount"].fillna(0)
     work["net_inflow"] = work["net_amount"] if "net_amount" in work.columns else None
     return work[["trade_date", "market", "main_inflow", "main_outflow", "net_inflow"]]
 
