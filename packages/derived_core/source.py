@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from platform_models import HLSignalItem, ShareholderChangeItem, ShareholderCountItem, StockQuoteItem, TechnicalFactorItem
+from platform_models import HLSignalItem, ShareholderChangeItem, ShareholderCountItem, StockQuoteItem, TechnicalFactorItem, TradingCalendarItem
 from quotemux.infra.common import normalize_stock_code
 
 
@@ -20,6 +20,12 @@ def _quote_mux():
     from quotemux import QuoteMux
 
     return QuoteMux()
+
+
+def _trading_calendar_request(exchange: str, start_date: str, end_date: str, is_open: bool | None):
+    from quotemux import TradingCalendarRequest
+
+    return TradingCalendarRequest(exchange=exchange, start_date=start_date, end_date=end_date, is_open=is_open)
 
 
 def _stock_quotes_request(
@@ -180,3 +186,29 @@ def get_hl_signal(code: str, trade_date: str, start_date: str, end_date: str) ->
         return []
     quote_items = _quote_mux().stocks.get_quotes(_stock_quotes_request(normalized, "1m", trade_date, start_date, end_date, "none"))
     return _build_hl_signal_items(normalized, quote_items)
+
+
+def get_previous_trading_days(exchange: str, trade_date: str, n: int) -> list[TradingCalendarItem]:
+    items = _quote_mux().markets.get_trading_calendar(_trading_calendar_request(exchange, "", trade_date, True))
+    return [item for item in items if item.trade_date < trade_date][-n:]
+
+
+def get_next_trading_days(exchange: str, trade_date: str, n: int) -> list[TradingCalendarItem]:
+    from datetime import date
+
+    from quotemux.infra.common import parse_date_text
+
+    trade_day = parse_date_text(trade_date)
+    end_date = ""
+    if trade_day is not None:
+        try:
+            next_year_day = trade_day.replace(year=trade_day.year + 1)
+        except ValueError:
+            next_year_day = date(trade_day.year + 1, 2, 28)
+        end_date = next_year_day.strftime("%Y-%m-%d")
+    items = _quote_mux().markets.get_trading_calendar(_trading_calendar_request(exchange, trade_date, end_date, True))
+    return [item for item in items if item.trade_date > trade_date][:n]
+
+
+def get_yearly_trading_calendar(exchange: str, start_year: int, end_year: int) -> list[TradingCalendarItem]:
+    return _quote_mux().markets.get_trading_calendar(_trading_calendar_request(exchange, f"{start_year}-01-01", f"{end_year}-12-31", None))

@@ -25,6 +25,27 @@
       "handler_name": "get_hl_signal",
       "mergeable": true,
       "notes": "基于 1 分钟行情派生每日最高最低先后信号。"
+    },
+    {
+      "capability_id": "markets.calendar.trading.previous",
+      "support_level": "derived",
+      "handler_name": "get_previous_trading_days",
+      "mergeable": true,
+      "notes": "基于交易日历派生上一批开市日。"
+    },
+    {
+      "capability_id": "markets.calendar.trading.next",
+      "support_level": "derived",
+      "handler_name": "get_next_trading_days",
+      "mergeable": true,
+      "notes": "基于交易日历派生下一批开市日。"
+    },
+    {
+      "capability_id": "markets.calendar.trading.yearly",
+      "support_level": "derived",
+      "handler_name": "get_yearly_trading_calendar",
+      "mergeable": true,
+      "notes": "基于交易日历派生年度范围日历。"
     }
   ],
   "capability_tags": [
@@ -37,8 +58,11 @@
   "supports_multi_instance": false,
   "handler_targets": {
     "get_hl_signal": "quotemux_packages.derived_core.source:get_hl_signal",
+    "get_next_trading_days": "quotemux_packages.derived_core.source:get_next_trading_days",
+    "get_previous_trading_days": "quotemux_packages.derived_core.source:get_previous_trading_days",
     "get_shareholder_changes": "quotemux_packages.derived_core.source:get_shareholder_changes",
-    "get_technical_factors": "quotemux_packages.derived_core.source:get_technical_factors"
+    "get_technical_factors": "quotemux_packages.derived_core.source:get_technical_factors",
+    "get_yearly_trading_calendar": "quotemux_packages.derived_core.source:get_yearly_trading_calendar"
   },
   "origin": "builtin",
   "package_root": ""
