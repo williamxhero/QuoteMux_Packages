@@ -108,7 +108,7 @@
       "support_level": "native",
       "handler_name": "get_connect_capital_flow",
       "mergeable": true,
-      "notes": ""
+      "notes": "Tushare moneyflow_hsgt 直出净额；北向净额可由同接口沪股通与深股通净额推导，买入/卖出额不在本接口伪造"
     },
     {
       "capability_id": "markets.connect.quotas",
@@ -129,7 +129,7 @@
       "support_level": "native",
       "handler_name": "get_market_capital_flow",
       "mergeable": true,
-      "notes": ""
+      "notes": "Tushare moneyflow_mkt_dc 直出净额；主力流入/流出由同接口大单与超大单买卖额汇总"
     },
     {
       "capability_id": "markets.participants.dragon_tiger",

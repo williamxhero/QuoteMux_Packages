@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import threading
 
 import pandas as pd
@@ -400,7 +400,7 @@ def get_bse_code_mappings(old_code: str, new_code: str, status: str) -> list[BSE
         return []
     work = cache_df.copy()
     work["old_code"] = work["o_code"].astype(str).str.split(".").str[0] if "o_code" in work.columns else ""
-    work["new_code"] = work["ts_code"].astype(str).str.split(".").str[0] if "ts_code" in work.columns else ""
+    work["new_code"] = work["n_code"].astype(str).str.split(".").str[0] if "n_code" in work.columns else ""
     work["effective_date"] = work["list_date"].astype(str) if "list_date" in work.columns else ""
     work["status"] = "active"
     if old_code:
@@ -412,8 +412,7 @@ def get_bse_code_mappings(old_code: str, new_code: str, status: str) -> list[BSE
     return [BSECodeMappingItem(old_code=str(row["old_code"]), new_code=str(row["new_code"]), effective_date=str(row["effective_date"]), status=str(row["status"])) for _, row in work.iterrows()]
 
 
-def get_hk_connect_targets(direction: str, status: str, effective_date: str) -> list[HKConnectTargetItem]:
-    actual_date = effective_date or datetime.now().strftime("%Y%m%d")
+def _build_hk_connect_target_items(direction: str, actual_date: str) -> list[HKConnectTargetItem]:
     type_values = ["HK_SH", "HK_SZ", "SH_HK", "SZ_HK"]
     if direction == "northbound":
         type_values = ["HK_SH", "HK_SZ"]
@@ -440,6 +439,16 @@ def get_hk_connect_targets(direction: str, status: str, effective_date: str) -> 
                 effective_date=str(row["trade_date"]),
             )
             items.append(item)
+    return items
+
+
+def get_hk_connect_targets(direction: str, status: str, effective_date: str) -> list[HKConnectTargetItem]:
+    query_dates = [effective_date] if effective_date else [(datetime.now() - timedelta(days=offset)).strftime("%Y%m%d") for offset in range(10)]
+    items: list[HKConnectTargetItem] = []
+    for actual_date in query_dates:
+        items = _build_hk_connect_target_items(direction, actual_date)
+        if items != []:
+            break
     if status:
         items = [item for item in items if item.status == status]
     return items
@@ -512,11 +521,24 @@ def _fetch_report_frame(start_value: str, end_value: str, code: str) -> pd.DataF
     work["report_date"] = work["report_date"].astype(str) if "report_date" in work.columns else ""
     work["institution"] = work["org_name"] if "org_name" in work.columns else ""
     work["analyst"] = work["author_name"] if "author_name" in work.columns else ""
+    work["name"] = work["name"] if "name" in work.columns else ""
     if "target_price" not in work.columns:
         work["target_price"] = None
     if "title" not in work.columns:
         work["title"] = ""
-    return work[["code", "report_date", "institution", "analyst", "rating", "target_price", "title"]]
+    return work[["code", "report_date", "name", "institution", "analyst", "rating", "target_price", "title"]]
+
+
+def _stock_name_map() -> dict[str, str]:
+    frames: list[pd.DataFrame] = []
+    for status in ("L", "D", "P"):
+        frame = read_cache_frame(build_cache_path("tushare", ["stocks", "catalog"], {"status": status}))
+        if not frame.empty and "code" in frame.columns and "name" in frame.columns:
+            frames.append(frame[["code", "name"]])
+    if frames == []:
+        return {}
+    work = pd.concat(frames, ignore_index=True).dropna(subset=["code"]).drop_duplicates(subset=["code"], keep="last")
+    return {str(row["code"]): str(row["name"]) for _, row in work.iterrows() if pd.notna(row["name"]) and str(row["name"]) != ""}
 
 
 def get_research_reports(code: str, report_date: str, start_date: str, end_date: str) -> list[ResearchReportItem]:
@@ -550,11 +572,12 @@ def get_research_reports(code: str, report_date: str, start_date: str, end_date:
 
 
 def get_rank_research_reports(trade_date: str, start_date: str, end_date: str, limit: int) -> list[RankingResearchReportItem]:
+    stock_names = _stock_name_map()
     return [
         RankingResearchReportItem(
             trade_date=item.report_date,
             code=item.code,
-            name="",
+            name=getattr(item, "name", "") or stock_names.get(item.code, ""),
             institution=item.institution,
             rating=item.rating,
             target_price=item.target_price,
@@ -633,7 +656,7 @@ def _fetch_nine_turn_frame(code: str, freq: str, start_value: str, end_value: st
     work = df.copy()
     work["code"] = normalize_stock_code(code)
     time_column = "trade_time" if "trade_time" in work.columns else "trade_date"
-    work["trade_time"] = work[time_column].astype(str)
+    work["trade_time"] = pd.to_datetime(work[time_column], format="mixed", errors="coerce").dt.strftime("%Y-%m-%d")
     work["freq"] = freq
     work["setup_index"] = work["up_count"] if "up_count" in work.columns else work["down_count"] if "down_count" in work.columns else None
     work["countdown_index"] = work["nine_up_turn"] if "nine_up_turn" in work.columns else work["nine_down_turn"] if "nine_down_turn" in work.columns else None
@@ -641,7 +664,7 @@ def _fetch_nine_turn_frame(code: str, freq: str, start_value: str, end_value: st
         lambda row: "nine_up" if str(row.get("nine_up_turn", "")) in {"1", "True", "true"} else "nine_down" if str(row.get("nine_down_turn", "")) in {"1", "True", "true"} else "",
         axis=1,
     )
-    return work[["code", "trade_time", "freq", "setup_index", "countdown_index", "signal"]]
+    return work.dropna(subset=["trade_time"])[["code", "trade_time", "freq", "setup_index", "countdown_index", "signal"]]
 
 
 def get_nine_turn(code: str, freq: str, trade_date: str, start_date: str, end_date: str) -> list[NineTurnItem]:
@@ -662,7 +685,7 @@ def get_nine_turn(code: str, freq: str, trade_date: str, start_date: str, end_da
     return [
         NineTurnItem(
             code=str(row["code"]),
-            trade_time=str(row["trade_time"]),
+            trade_time=str(row["trade_time"])[:10],
             freq=str(row["freq"]),
             setup_index=int(row["setup_index"]) if pd.notna(row["setup_index"]) else None,
             countdown_index=int(row["countdown_index"]) if pd.notna(row["countdown_index"]) else None,

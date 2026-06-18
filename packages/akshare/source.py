@@ -22,6 +22,9 @@ except Exception:
     curl_requests = None
 
 from datetime import datetime, timedelta
+from functools import lru_cache
+import hashlib
+from io import StringIO
 
 import pandas as pd
 import re
@@ -37,10 +40,10 @@ def _patched_request(self, method, url, **kwargs):
 requests.Session.request = _patched_request
 
 from quotemux.infra.cache.store import build_cache_path, filter_frame_by_date_range, filter_frame_by_datetime_range, latest_n_rows, merge_cache_frame, read_cache_frame, write_cache_frame
-from quotemux.infra.common import add_quote_metrics, aggregate_ohlc, build_time_bounds, format_date_value, format_datetime_value, normalize_index_code, normalize_stock_code
+from quotemux.infra.common import add_quote_metrics, aggregate_ohlc, build_time_bounds, format_date_value, format_datetime_value, normalize_index_code, normalize_stock_code, split_csv
 from quotemux.runtime_core.quality import build_akshare_index_symbol, calibrate_quote_units
 from quotemux.infra.provider_runtime.core import call_provider_api
-from platform_models import BlockTradeItem, BoardCatalogItem, BoardCategoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, ConnectCapitalFlowItem, DisclosureDateItem, DividendItem, DragonTigerInstitutionItem, DragonTigerItem, ExpressItem, ForecastItem, HKConnectHoldingItem, IndexMemberItem, IndexQuoteItem, MainBusinessItem, MarketCapitalFlowItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockFinanceIndicatorItem, StockFinancialStatementItem, StockMoneyFlowItem, StockProfileItem, StockQuoteItem, SurveyItem, TradingCalendarItem, UnlockScheduleItem
+from platform_models import AuctionItem, BlockTradeItem, BoardCatalogItem, BoardCategoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, ConnectCapitalFlowItem, DisclosureDateItem, DividendItem, DragonTigerInstitutionItem, DragonTigerItem, ExpressItem, ForecastItem, HKConnectHoldingItem, HotMoneyDetailItem, IndexMemberItem, IndexQuoteItem, MainBusinessItem, MarketCapitalFlowItem, NewsEventItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockFinanceIndicatorItem, StockFinancialStatementItem, StockMoneyFlowItem, StockProfileItem, StockQuoteItem, SurveyItem, TradingCalendarItem, UnlockScheduleItem
 
 
 DEFAULT_LOOKBACK_DAYS = 30
@@ -77,6 +80,23 @@ def _call_ak(api_name: str, func, *args, **kwargs):
 def _float_value(value: object) -> float | None:
     number = pd.to_numeric(value, errors="coerce")
     return float(number) if pd.notna(number) else None
+
+
+def _money_text_to_float(value: object) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).replace(",", "").replace("%", "").strip()
+    if text in {"", "-", "--", "None", "nan"}:
+        return None
+    multiplier = 1.0
+    if text.endswith("亿"):
+        multiplier = 100000000.0
+        text = text[:-1]
+    elif text.endswith("万"):
+        multiplier = 10000.0
+        text = text[:-1]
+    number = pd.to_numeric(text, errors="coerce")
+    return float(number) * multiplier if pd.notna(number) else None
 
 
 def _int_value(value: object) -> int | None:
@@ -150,7 +170,7 @@ def _stock_market(code: str) -> str:
     normalized_code = normalize_stock_code(code)
     if normalized_code.startswith("6"):
         return "sh"
-    if normalized_code.startswith(("4", "8")):
+    if normalized_code.startswith(("4", "8", "9")):
         return "bj"
     return "sz"
 
@@ -490,11 +510,64 @@ def get_trading_calendar(exchange: str, start_date: str, end_date: str, is_open:
     return items
 
 
+def _board_catalog_fetchers(category: str) -> tuple[tuple[str, object], ...]:
+    if category == "concept":
+        return (
+            ("stock_board_concept_name_em", ak.stock_board_concept_name_em),
+            ("stock_board_concept_name_ths", ak.stock_board_concept_name_ths),
+        )
+    return (
+        ("stock_board_industry_name_em", ak.stock_board_industry_name_em),
+        ("stock_board_industry_name_ths", ak.stock_board_industry_name_ths),
+    )
+
+
+def _normalize_board_catalog_frame(fetched_df: pd.DataFrame, category: str) -> pd.DataFrame:
+    if fetched_df is None or fetched_df.empty:
+        return pd.DataFrame()
+    code_column = ""
+    name_column = ""
+    for candidate in ("板块代码", "代码", "code"):
+        if candidate in fetched_df.columns:
+            code_column = candidate
+            break
+    for candidate in ("板块名称", "名称", "name"):
+        if candidate in fetched_df.columns:
+            name_column = candidate
+            break
+    if code_column == "" or name_column == "":
+        return pd.DataFrame()
+    work = fetched_df.copy()
+    work["board_code"] = work[code_column].fillna("").astype(str).str.upper()
+    work["board_name"] = work[name_column].fillna("").astype(str)
+    work["category"] = category
+    work["status"] = "active"
+    work = work[(work["board_code"] != "") & (work["board_name"] != "")]
+    return work[["board_code", "board_name", "category", "status"]]
+
+
+def _fetch_board_catalog_frame(category: str) -> pd.DataFrame:
+    for api_name, fetcher in _board_catalog_fetchers(category):
+        try:
+            frame = _normalize_board_catalog_frame(_call_ak(api_name, fetcher), category)
+        except Exception:
+            continue
+        if not frame.empty:
+            return frame
+    return pd.DataFrame()
+
+
 def _load_board_catalog_frame(category: str) -> pd.DataFrame:
     if category not in BOARD_CATEGORIES:
         return pd.DataFrame()
     cache_path = build_cache_path("akshare", ["boards", "catalog"], {"category": category})
     cache_df = read_cache_frame(cache_path)
+    if cache_df.empty:
+        fetched_df = _fetch_board_catalog_frame(category)
+        if not fetched_df.empty:
+            write_cache_frame(cache_path, fetched_df)
+            cache_df = fetched_df
+    return cache_df
     if cache_df.empty:
         if category == "concept":
             fetched_df = _call_ak("stock_board_concept_name_em", ak.stock_board_concept_name_em)
@@ -593,21 +666,99 @@ def get_board_categories(parent_code: str, level: int | None) -> list[BoardCateg
     return items
 
 
+def _ths_member_page_url(category: str, code: str, page: int | None) -> str:
+    path = "gn" if category == "concept" else "thshy"
+    if page is None:
+        return f"http://q.10jqka.com.cn/{path}/detail/code/{code}/"
+    return f"http://q.10jqka.com.cn/{path}/detail/code/{code}/field/199112/order/desc/page/{page}/ajax/1/"
+
+
+def _ths_headers(referer: str) -> dict[str, str]:
+    from akshare.datasets import get_ths_js
+    import py_mini_racer
+
+    js_code = py_mini_racer.MiniRacer()
+    with open(get_ths_js("ths.js"), encoding="utf-8") as file_obj:
+        js_code.eval(file_obj.read())
+    return {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.90 Safari/537.36",
+        "Cookie": f"v={js_code.call('v')}",
+        "Referer": referer,
+    }
+
+
+def _read_ths_member_frame(html: str) -> pd.DataFrame:
+    try:
+        frames = pd.read_html(StringIO(html))
+    except ValueError:
+        return pd.DataFrame()
+    for frame in frames:
+        if "代码" in frame.columns and "名称" in frame.columns:
+            return frame[["代码", "名称"]]
+    return pd.DataFrame()
+
+
+def _ths_page_count(html: str) -> int:
+    matched = re.search(r'page_info[^>]*>\s*\d+/(\d+)', html)
+    if matched is None:
+        return 1
+    number = pd.to_numeric(matched.group(1), errors="coerce")
+    return int(number) if pd.notna(number) else 1
+
+
+def _fetch_ths_board_members_frame(board_code: str, category: str) -> pd.DataFrame:
+    if category not in BOARD_CATEGORIES or not board_code.isdigit():
+        return pd.DataFrame()
+    detail_url = _ths_member_page_url(category, board_code, None)
+    try:
+        first_response = requests.get(detail_url, headers=_ths_headers(detail_url), timeout=15)
+    except Exception:
+        return pd.DataFrame()
+    first_frame = _read_ths_member_frame(first_response.text)
+    frames = [first_frame] if not first_frame.empty else []
+    page_count = _ths_page_count(first_response.text)
+    for page in range(2, page_count + 1):
+        try:
+            response = requests.get(_ths_member_page_url(category, board_code, page), headers=_ths_headers(detail_url), timeout=15)
+        except Exception:
+            continue
+        frame = _read_ths_member_frame(response.text)
+        if not frame.empty:
+            frames.append(frame)
+    if frames == []:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True).drop_duplicates(subset=["代码"], keep="last")
+
+
 def get_board_members(board_code: str, trade_date: str) -> list[BoardMemberItem]:
     del trade_date
     normalized = str(board_code).upper()
+    symbol, category = _board_symbol_and_category(normalized)
+    member_sources = (
+        (("stock_board_concept_cons_em", ak.stock_board_concept_cons_em),) if category == "concept" else
+        (("stock_board_industry_cons_em", ak.stock_board_industry_cons_em),) if category == "industry" else
+        (
+            ("stock_board_concept_cons_em", ak.stock_board_concept_cons_em),
+            ("stock_board_industry_cons_em", ak.stock_board_industry_cons_em),
+        )
+    )
+    request_symbols = [normalized]
+    if symbol != "" and symbol != normalized:
+        request_symbols.append(symbol)
     result = pd.DataFrame()
-    for api_name, func in (
-        ("stock_board_concept_cons_em", ak.stock_board_concept_cons_em),
-        ("stock_board_industry_cons_em", ak.stock_board_industry_cons_em),
-    ):
-        try:
-            current = _call_ak(api_name, func, symbol=normalized)
-        except Exception:
-            continue
-        if current is not None and not current.empty:
-            result = current
+    for api_name, func in member_sources:
+        for request_symbol in request_symbols:
+            try:
+                current = _call_ak(api_name, func, symbol=request_symbol)
+            except Exception:
+                continue
+            if current is not None and not current.empty:
+                result = current
+                break
+        if not result.empty:
             break
+    if result.empty:
+        result = _fetch_ths_board_members_frame(normalized, category)
     if result.empty:
         return []
     items: list[BoardMemberItem] = []
@@ -615,6 +766,7 @@ def get_board_members(board_code: str, trade_date: str) -> list[BoardMemberItem]
         code = normalize_stock_code(str(row.get("代码", "")))
         if code == "":
             continue
+        code = code.zfill(6)
         items.append(
             BoardMemberItem(
                 board_code=normalized,
@@ -741,8 +893,13 @@ def get_board_money_flow(board_code: str, trade_date: str, start_date: str, end_
         return []
     if category != "industry":
         return []
-    result = _call_ak("stock_sector_fund_flow_hist", ak.stock_sector_fund_flow_hist, symbol=symbol)
+    try:
+        result = _call_ak("stock_sector_fund_flow_hist", ak.stock_sector_fund_flow_hist, symbol=symbol)
+    except Exception:
+        result = pd.DataFrame()
     if result is None or result.empty:
+        if trade_date != "":
+            return [item for item in get_board_daily_money_flow_snapshot(trade_date, category, 10000, 0) if item.board_code == normalized]
         return []
     actual_trade_date = format_date_value(trade_date)
     actual_start = format_date_value(start_date)
@@ -969,6 +1126,256 @@ def get_dragon_tiger_institutions(trade_date: str, start_date: str, end_date: st
             )
         )
     return sorted(items, key=lambda item: (item.trade_date, item.code))[:limit]
+
+
+def get_hot_money_details(trade_date: str, start_date: str, end_date: str, name: str, limit: int) -> list[HotMoneyDetailItem]:
+    actual_start, actual_end = _date_window(trade_date, start_date, end_date, 30)
+    active_frame = _call_ak("stock_lhb_hyyyb_em", ak.stock_lhb_hyyyb_em, start_date=actual_start.replace("-", ""), end_date=actual_end.replace("-", ""))
+    if active_frame is None or active_frame.empty:
+        return []
+    work = active_frame.copy()
+    if "上榜日" in work.columns:
+        work["上榜日"] = pd.to_datetime(work["上榜日"], errors="coerce")
+    if "总买卖净额" in work.columns:
+        work["总买卖净额"] = pd.to_numeric(work["总买卖净额"], errors="coerce")
+    sort_columns = [column for column in ("上榜日", "总买卖净额") if column in work.columns]
+    if sort_columns:
+        work = work.sort_values(sort_columns, ascending=False)
+
+    collected: list[HotMoneyDetailItem] = []
+    seen: set[tuple[str, str, str]] = set()
+    max_departments = min(max(limit, 6), 12)
+    for _, active_row in work.head(max_departments).iterrows():
+        department_code = str(active_row.get("营业部代码", ""))
+        if department_code == "":
+            continue
+        detail_frame = _call_ak("stock_lhb_yyb_detail_em", ak.stock_lhb_yyb_detail_em, symbol=department_code)
+        if detail_frame is None or detail_frame.empty:
+            continue
+        for _, row in detail_frame.iterrows():
+            row_date = format_date_value(row.get("交易日期", ""))
+            if not _date_in_window(row_date, actual_start, actual_end):
+                continue
+            department_name = str(row.get("营业部名称", ""))
+            if name and name not in department_name:
+                continue
+            row_code = normalize_stock_code(str(row.get("股票代码", "")))
+            key = (row_date, department_name, row_code)
+            if key in seen:
+                continue
+            seen.add(key)
+            collected.append(
+                HotMoneyDetailItem(
+                    trade_date=row_date,
+                    name=department_name,
+                    code=row_code,
+                    stock_name=str(row.get("股票名称", "")),
+                    buy_amount=_float_value(row.get("买入金额")),
+                    sell_amount=_float_value(row.get("卖出金额")),
+                    net_amount=_float_value(row.get("净额")),
+                )
+            )
+            if len(collected) >= limit:
+                return sorted(collected, key=lambda item: (item.trade_date, item.name, item.code), reverse=True)[:limit]
+    return sorted(collected, key=lambda item: (item.trade_date, item.name, item.code), reverse=True)[:limit]
+
+
+@lru_cache(maxsize=1)
+def _latest_akshare_trade_date() -> str:
+    result = _call_ak("tool_trade_date_hist_sina", ak.tool_trade_date_hist_sina)
+    if result is None or result.empty or "trade_date" not in result.columns:
+        return ""
+    today_text = datetime.now().strftime("%Y-%m-%d")
+    dates = sorted(format_date_value(value) for value in result["trade_date"].tolist())
+    valid_dates = [value for value in dates if value != "" and value <= today_text]
+    return valid_dates[-1] if valid_dates else ""
+
+
+def _stock_tick_symbol(code: str) -> str:
+    normalized_code = normalize_stock_code(code)
+    market = _stock_market(normalized_code)
+    return f"{market}{normalized_code}"
+
+
+def _open_auction_from_tick(code: str, trade_date: str) -> AuctionItem | None:
+    actual_code = normalize_stock_code(code)
+    actual_trade_date = format_date_value(trade_date)
+    if actual_code == "" or actual_trade_date == "" or actual_trade_date != _latest_akshare_trade_date():
+        return None
+    result = _call_ak("stock_zh_a_tick_tx_js", ak.stock_zh_a_tick_tx_js, symbol=_stock_tick_symbol(actual_code))
+    if result is None or result.empty or "成交时间" not in result.columns:
+        return None
+    work = result.copy()
+    work["成交时间"] = work["成交时间"].astype(str)
+    work = work[(work["成交时间"] >= "09:25:00") & (work["成交时间"] < "09:26:00")]
+    if work.empty:
+        return None
+    row = work.sort_values("成交时间").iloc[0]
+    return AuctionItem(
+        code=actual_code,
+        trade_date=actual_trade_date,
+        auction_time=str(row.get("成交时间", "")),
+        price=_float_value(row.get("成交价格")),
+        volume=_float_value(row.get("成交量")),
+        amount=_float_value(row.get("成交金额")),
+        session="open",
+    )
+
+
+def get_auctions(code: str, session: str, trade_date: str, start_date: str, end_date: str) -> list[AuctionItem]:
+    actual_session = session or "open"
+    if actual_session != "open":
+        return []
+    actual_trade_date = format_date_value(trade_date or end_date or start_date)
+    item = _open_auction_from_tick(code, actual_trade_date)
+    return [] if item is None else [item]
+
+
+def get_market_open_auctions(codes: str, trade_date: str) -> list[AuctionItem]:
+    items: list[AuctionItem] = []
+    for code in split_csv(codes):
+        item = _open_auction_from_tick(code, trade_date)
+        if item is not None:
+            items.append(item)
+    return sorted(items, key=lambda item: (item.trade_date, item.code, item.auction_time))
+
+
+def _news_event_id(prefix: str, *values: str) -> str:
+    digest = hashlib.sha1("|".join(values).encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}-{digest}"
+
+
+def _news_session_tag(time_text: str) -> str:
+    if len(time_text) < 13:
+        return ""
+    try:
+        hour = int(time_text[11:13])
+    except ValueError:
+        return ""
+    if hour < 9:
+        return "盘前"
+    if hour < 15:
+        return "盘中"
+    return "盘后"
+
+
+def _market_news_events(trade_date: str, limit: int, include_content_text: bool) -> list[NewsEventItem]:
+    actual_trade_date = format_date_value(trade_date)
+    result = _call_ak("news_cctv", ak.news_cctv, date=actual_trade_date.replace("-", ""))
+    if result is None or result.empty:
+        return []
+    items: list[NewsEventItem] = []
+    for _, row in result.iterrows():
+        row_date = format_date_value(row.get("date", actual_trade_date))
+        if row_date != actual_trade_date:
+            continue
+        title = _text_value(row.get("title", ""))
+        content_text = _text_value(row.get("content", ""))
+        if title == "":
+            continue
+        items.append(
+            NewsEventItem(
+                event_id=_news_event_id("akshare-cctv", row_date, title),
+                trade_date=row_date,
+                announcement_time=row_date,
+                crawl_time="",
+                session_tag="盘后",
+                event_type="重要新闻",
+                title=title,
+                summary=content_text,
+                content_text=content_text if include_content_text else "",
+                importance_score=3,
+                sentiment="中性",
+                source_name="央视新闻",
+                primary_detail_url="",
+                related_stock_codes=[],
+                related_stock_names=[],
+                related_board_codes=[],
+                related_board_names=[],
+                topic_tags=[],
+                mentioned_stock_codes=[],
+                mentioned_stock_names=[],
+                mentioned_board_names=[],
+            )
+        )
+    return items[:limit]
+
+
+def _stock_news_events(trade_date: str, stock_code: str, limit: int, include_content_text: bool) -> list[NewsEventItem]:
+    actual_trade_date = format_date_value(trade_date)
+    normalized_code = normalize_stock_code(stock_code)
+    result = _call_ak("stock_news_em", ak.stock_news_em, symbol=normalized_code)
+    if result is None or result.empty:
+        return []
+    items: list[NewsEventItem] = []
+    for _, row in result.iterrows():
+        announcement_time = format_datetime_value(row.get("发布时间", ""), "1m")
+        row_date = format_date_value(announcement_time[:10])
+        if row_date != actual_trade_date:
+            continue
+        title = _text_value(row.get("新闻标题", ""))
+        content_text = _text_value(row.get("新闻内容", ""))
+        detail_url = _text_value(row.get("新闻链接", ""))
+        if title == "":
+            continue
+        items.append(
+            NewsEventItem(
+                event_id=_news_event_id("akshare-stock-news", normalized_code, announcement_time, title, detail_url),
+                trade_date=row_date,
+                announcement_time=announcement_time,
+                crawl_time="",
+                session_tag=_news_session_tag(announcement_time),
+                event_type="个股新闻",
+                title=title,
+                summary=content_text,
+                content_text=content_text if include_content_text else "",
+                importance_score=3,
+                sentiment="中性",
+                source_name=_text_value(row.get("文章来源", "")),
+                primary_detail_url=detail_url,
+                related_stock_codes=[normalized_code],
+                related_stock_names=[],
+                related_board_codes=[],
+                related_board_names=[],
+                topic_tags=[],
+                mentioned_stock_codes=[normalized_code],
+                mentioned_stock_names=[],
+                mentioned_board_names=[],
+            )
+        )
+    return sorted(items, key=lambda item: (item.announcement_time, item.event_id), reverse=True)[:limit]
+
+
+def get_news_events(
+    trade_date: str,
+    announcement_date: str,
+    crawl_date: str,
+    stock_code: str,
+    event_type: str,
+    min_importance_score: int | None,
+    sort_by: str,
+    limit: int,
+    offset: int,
+    include_sources: bool,
+    include_content_text: bool,
+) -> list[NewsEventItem]:
+    del crawl_date, include_sources
+    actual_trade_date = format_date_value(trade_date)
+    if actual_trade_date == "":
+        return []
+    actual_announcement_date = format_date_value(announcement_date) if announcement_date != "" else ""
+    if actual_announcement_date not in {"", actual_trade_date}:
+        return []
+    items = _stock_news_events(actual_trade_date, stock_code, limit + offset, include_content_text) if stock_code != "" else _market_news_events(actual_trade_date, limit + offset, include_content_text)
+    if event_type != "":
+        items = [item for item in items if item.event_type == event_type]
+    if min_importance_score is not None:
+        items = [item for item in items if item.importance_score >= min_importance_score]
+    if sort_by == "crawl_time":
+        items = sorted(items, key=lambda item: (item.crawl_time, item.announcement_time, item.event_id), reverse=True)
+    else:
+        items = sorted(items, key=lambda item: (item.announcement_time, item.importance_score, item.event_id), reverse=True)
+    return items[offset: offset + limit]
 
 
 def get_stock_money_flow(code: str, trade_date: str, start_date: str, end_date: str, view: str) -> list[StockMoneyFlowItem]:

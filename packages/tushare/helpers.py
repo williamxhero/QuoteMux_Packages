@@ -78,6 +78,7 @@ def read_cached_ranges(
     end_value: str,
     unit: str,
     fetcher,
+    extra_key_columns: tuple[str, ...] = (),
 ) -> pd.DataFrame:
     cache_path = build_cache_path("tushare", namespace, identity)
     cache_df = read_cache_frame(cache_path)
@@ -94,6 +95,9 @@ def read_cached_ranges(
         return cache_df
     merged_frame = pd.concat(fetched_frames, ignore_index=True)
     key_columns = [key for key in identity.keys() if key in merged_frame.columns or (not cache_df.empty and key in cache_df.columns)]
+    for key in extra_key_columns:
+        if key in merged_frame.columns or (not cache_df.empty and key in cache_df.columns):
+            key_columns.append(key)
     key_columns.append(column)
     merged_cache = merge_cache_frame(cache_df, merged_frame, key_columns, [column])
     write_cache_frame(cache_path, merged_cache)

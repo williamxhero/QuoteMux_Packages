@@ -91,7 +91,7 @@ def _stock_exchange_from_ts_code(ts_code: str) -> str:
 
 def _stock_market_from_row(market_text: str, exchange: str, code: str) -> str:
     text = str(market_text).lower()
-    if exchange == "BSE" or code.startswith(("4", "8")):
+    if exchange == "BSE" or code.startswith(("4", "8", "9")):
         return "beijing"
     if "科创" in text or code.startswith("688"):
         return "star_market"
@@ -270,6 +270,64 @@ def _board_code_to_ts(board_code: str) -> str:
     return f"{text}.TI"
 
 
+def _board_ref_item(board_code: str) -> tuple[str, str]:
+    if not str(board_code).upper().startswith("BK"):
+        return "", ""
+    try:
+        from quotemux.infra.db.client import query_dataframe
+
+        frame = query_dataframe(
+            """
+            select name, board_type
+            from ref.board
+            where board_code = %s
+            """,
+            (str(board_code).upper(),),
+        )
+    except Exception:
+        return "", ""
+    if frame.empty:
+        return "", ""
+    row = frame.iloc[0]
+    return str(row["name"]).strip(), str(row["board_type"]).strip()
+
+
+def _tushare_board_code_from_name(board_name: str, board_type: str) -> str:
+    if board_name == "":
+        return ""
+    frames = [_load_board_catalog_frame(index_type) for index_type in ("N", "I")]
+    frames = [frame for frame in frames if not frame.empty]
+    if frames == []:
+        return ""
+    work = pd.concat(frames, ignore_index=True)
+    matched = work[work["name"].astype(str).str.strip() == board_name]
+    if matched.empty:
+        return ""
+    candidates = [str(row["board_code"]).upper() for _, row in matched.iterrows()]
+    if board_type == "concept":
+        prefixes = ("885", "886", "883", "884", "881", "877")
+    elif board_type == "industry":
+        prefixes = ("884", "881", "877", "861", "871", "700")
+    else:
+        prefixes = ("884", "881", "877", "885", "886", "861", "871", "700", "883")
+    for prefix in prefixes:
+        for candidate in candidates:
+            if candidate.startswith(prefix):
+                return candidate
+    return sorted(candidates)[0]
+
+
+def _resolve_board_code_pair(board_code: str) -> tuple[str, str]:
+    output_code = _board_code_to_ts(board_code).split(".", 1)[0]
+    if not output_code.startswith("BK"):
+        return output_code, output_code
+    board_name, board_type = _board_ref_item(output_code)
+    provider_code = _tushare_board_code_from_name(board_name, board_type)
+    if provider_code == "":
+        return output_code, output_code
+    return output_code, provider_code
+
+
 def _board_category_from_code(board_code: str) -> str:
     text = str(board_code).upper()
     if text.startswith(("881", "877")):
@@ -425,10 +483,14 @@ def get_board_member_history(board_code: str, start_date: str, end_date: str) ->
             items.append(BoardMemberHistoryItem(board_code=str(row["board_code"]), code=str(row["code"]), name=str(row["name"]), effective_date=format_date_value(in_date), action="add"))
         if out_date and (start_text == "" or out_date >= start_text) and (end_text == "" or out_date <= end_text):
             items.append(BoardMemberHistoryItem(board_code=str(row["board_code"]), code=str(row["code"]), name=str(row["name"]), effective_date=format_date_value(out_date), action="remove"))
+        if in_date == "" and out_date == "":
+            baseline_date = "19000101"
+            if (start_text == "" or baseline_date >= start_text) and (end_text == "" or baseline_date <= end_text):
+                items.append(BoardMemberHistoryItem(board_code=str(row["board_code"]), code=str(row["code"]), name=str(row["name"]), effective_date=format_date_value(baseline_date), action="add"))
     return sorted(items, key=lambda item: (item.effective_date, item.code, item.action))
 
 
-def _fetch_board_quotes_frame(board_code: str, start_value: str, end_value: str) -> pd.DataFrame:
+def _fetch_board_quotes_frame(board_code: str, start_value: str, end_value: str, output_board_code: str = "") -> pd.DataFrame:
     pro = get_ts_pro()
     ts_code = _board_code_to_ts(board_code)
     if pro is None or ts_code == "":
@@ -443,13 +505,18 @@ def _fetch_board_quotes_frame(board_code: str, start_value: str, end_value: str)
     if df is None or df.empty:
         return pd.DataFrame()
     work = df.copy()
-    for column in ["trade_date", "open", "high", "low", "close", "pre_close", "pct_change", "vol", "amount"]:
+    for column in ["trade_date", "open", "high", "low", "close", "pre_close", "change", "pct_change", "vol", "avg_price", "amount"]:
         if column not in work.columns:
             work[column] = None
-    work["board_code"] = ts_code.split(".", 1)[0]
+    work["board_code"] = output_board_code or ts_code.split(".", 1)[0]
     work["trade_time"] = pd.to_datetime(work["trade_date"], errors="coerce")
     work["volume"] = pd.to_numeric(work["vol"], errors="coerce") if "vol" in work.columns else None
-    return work[["board_code", "trade_time", "open", "high", "low", "close", "pre_close", "pct_change", "volume", "amount"]]
+    work["amount"] = pd.to_numeric(work["amount"], errors="coerce")
+    amount_missing = work["amount"].isna()
+    work.loc[amount_missing, "amount"] = pd.to_numeric(work.loc[amount_missing, "avg_price"], errors="coerce") * pd.to_numeric(work.loc[amount_missing, "vol"], errors="coerce") * 100
+    work["change"] = pd.to_numeric(work["change"], errors="coerce")
+    work["pct_chg"] = pd.to_numeric(work["pct_change"], errors="coerce")
+    return work[["board_code", "trade_time", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume", "amount"]]
 
 
 def get_board_quotes(board_codes: list[str], freq: str, trade_date: str, start_date: str, end_date: str, start_time: str, end_time: str, count: int | None) -> list[BoardQuoteItem]:
@@ -467,14 +534,14 @@ def get_board_quotes(board_codes: list[str], freq: str, trade_date: str, start_d
         request_end = request_start
     items: list[BoardQuoteItem] = []
     for board_code in board_codes:
-        normalized = _board_code_to_ts(board_code).split(".", 1)[0]
+        normalized, provider_code = _resolve_board_code_pair(board_code)
         cache_path = build_cache_path("tushare", ["boards", "quotes"], {"board_code": normalized})
         cache_df = read_cache_frame(cache_path)
         missing_ranges = plan_missing_ranges(cache_df, "trade_time", request_start, request_end, "day")
-        fetched_frames = [_fetch_board_quotes_frame(normalized, missing_start, missing_end) for missing_start, missing_end in missing_ranges]
+        fetched_frames = [_fetch_board_quotes_frame(provider_code, missing_start, missing_end, normalized) for missing_start, missing_end in missing_ranges]
         fetched_frames = [frame for frame in fetched_frames if not frame.empty]
         if cache_df.empty and fetched_frames == []:
-            fetched_df = _fetch_board_quotes_frame(normalized, request_start, request_end)
+            fetched_df = _fetch_board_quotes_frame(provider_code, request_start, request_end, normalized)
             if not fetched_df.empty:
                 fetched_frames.append(fetched_df)
         if fetched_frames:
@@ -484,6 +551,26 @@ def get_board_quotes(board_codes: list[str], freq: str, trade_date: str, start_d
         if filtered_df.empty:
             continue
         filtered_df["trade_time"] = pd.to_datetime(filtered_df["trade_time"])
+        if freq == "1d":
+            daily_df = latest_n_rows(filtered_df.sort_values("trade_time"), "trade_time", count)
+            for _, row in daily_df.iterrows():
+                items.append(
+                    BoardQuoteItem(
+                        board_code=normalized,
+                        trade_time=format_datetime_value(row["trade_time"], freq),
+                        freq=freq,
+                        open=float(row["open"]) if pd.notna(row["open"]) else None,
+                        high=float(row["high"]) if pd.notna(row["high"]) else None,
+                        low=float(row["low"]) if pd.notna(row["low"]) else None,
+                        close=float(row["close"]) if pd.notna(row["close"]) else None,
+                        pre_close=float(row["pre_close"]) if pd.notna(row["pre_close"]) else None,
+                        change=float(row["change"]) if pd.notna(row["change"]) else None,
+                        pct_chg=float(row["pct_chg"]) if pd.notna(row["pct_chg"]) else None,
+                        volume=float(row["volume"]) if pd.notna(row["volume"]) else None,
+                        amount=float(row["amount"]) if pd.notna(row["amount"]) else None,
+                    )
+                )
+            continue
         agg_df = add_quote_metrics(aggregate_ohlc(filtered_df.drop(columns=["board_code"]), freq))
         if count:
             agg_df = agg_df.tail(count)
@@ -803,6 +890,8 @@ def _fetch_stock_quotes_frame(code: str, freq: str, start_dt: datetime | None, e
     work["freq"] = freq
     work["adjust"] = adjust
     work["volume2"] = work[volume_column] if volume_column in work.columns else None
+    if "amount" in work.columns:
+        work["amount"] = pd.to_numeric(work["amount"], errors="coerce") * 1000
     work["is_suspended"] = False
     work["is_st"] = False
     if "name" in work.columns:
@@ -829,6 +918,7 @@ def _fetch_stock_daily_snapshot_frame(trade_date: str) -> pd.DataFrame:
     for column in ["open", "high", "low", "close", "pre_close", "change", "pct_chg", "amount"]:
         if column not in work.columns:
             work[column] = None
+    work["amount"] = pd.to_numeric(work["amount"], errors="coerce") * 1000
     work["is_suspended"] = False
     work["is_st"] = False
     return work[["code", "trade_time", "freq", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume2", "amount", "adjust", "is_suspended", "is_st"]]
@@ -1027,9 +1117,9 @@ def _fetch_money_flow_frame(code: str, start_value: str, end_value: str, view: s
     work = df.copy()
     work["code"] = normalize_stock_code(code)
     work["view"] = view
-    work["main_inflow"] = (work["buy_lg_amount"].fillna(0) + work["buy_elg_amount"].fillna(0)).astype(float)
-    work["main_outflow"] = (work["sell_lg_amount"].fillna(0) + work["sell_elg_amount"].fillna(0)).astype(float)
-    work["net_inflow"] = work["net_mf_amount"]
+    work["main_inflow"] = _amount_wan_to_yuan(work["buy_lg_amount"].fillna(0) + work["buy_elg_amount"].fillna(0))
+    work["main_outflow"] = _amount_wan_to_yuan(work["sell_lg_amount"].fillna(0) + work["sell_elg_amount"].fillna(0))
+    work["net_inflow"] = _amount_wan_to_yuan(work["net_mf_amount"])
     return work[["code", "trade_date", "view", "main_inflow", "main_outflow", "net_inflow"]]
 
 
@@ -1099,6 +1189,12 @@ def _first_existing_column(frame: pd.DataFrame, column_names: tuple[str, ...]) -
     return None
 
 
+def _amount_wan_to_yuan(value: object) -> object:
+    if value is None:
+        return None
+    return pd.to_numeric(value, errors="coerce") * 10000
+
+
 def board_code_to_ts(board_code: str) -> str:
     text = board_code.strip().upper()
     if not text:
@@ -1126,9 +1222,9 @@ def _fetch_board_money_flow_frame(board_code: str, start_value: str, end_value: 
     code_column = "ts_code" if "ts_code" in work.columns else "code"
     work["board_code"] = work[code_column].astype(str).str.split(".").str[0]
     work["scope"] = scope
-    work["inflow"] = _first_existing_column(work, ("net_buy_amount", "buy_amount", "buy_elg_amount"))
-    work["outflow"] = _first_existing_column(work, ("net_sell_amount", "sell_amount", "sell_elg_amount"))
-    work["net_inflow"] = _first_existing_column(work, ("net_amount", "net_buy", "net_mf_amount", "net_inflow"))
+    work["inflow"] = _amount_wan_to_yuan(_first_existing_column(work, ("net_buy_amount", "buy_amount", "buy_elg_amount")))
+    work["outflow"] = _amount_wan_to_yuan(_first_existing_column(work, ("net_sell_amount", "sell_amount", "sell_elg_amount")))
+    work["net_inflow"] = _amount_wan_to_yuan(_first_existing_column(work, ("net_amount", "net_buy", "net_mf_amount", "net_inflow")))
     return work[["board_code", "trade_date", "scope", "inflow", "outflow", "net_inflow"]]
 
 
@@ -1200,6 +1296,14 @@ def _fetch_market_capital_flow_frame(start_value: str, end_value: str) -> pd.Dat
     return work[["trade_date", "market", "main_inflow", "main_outflow", "net_inflow"]]
 
 
+def _market_capital_flow_cache_needs_fetch(cache_df: pd.DataFrame, start_value: str, end_value: str) -> bool:
+    filtered_df = filter_frame_by_date_range(cache_df, "trade_date", start_value, end_value)
+    required_columns = {"trade_date", "market", "main_inflow", "main_outflow", "net_inflow"}
+    if filtered_df.empty or not required_columns.issubset(filtered_df.columns):
+        return True
+    return bool(filtered_df[["main_inflow", "main_outflow", "net_inflow"]].isna().any().any())
+
+
 def get_market_capital_flow(trade_date: str, start_date: str, end_date: str) -> list[MarketCapitalFlowItem]:
     actual_start = trade_date or start_date
     actual_end = trade_date or end_date
@@ -1222,6 +1326,10 @@ def get_market_capital_flow(trade_date: str, start_date: str, end_date: str) -> 
         fetched_df = _fetch_market_capital_flow_frame(actual_start, actual_end)
         if not fetched_df.empty:
             fetched_frames.append(fetched_df)
+    if not fetched_frames and _market_capital_flow_cache_needs_fetch(cache_df, actual_start, actual_end):
+        fetched_df = _fetch_market_capital_flow_frame(actual_start, actual_end)
+        if not fetched_df.empty:
+            fetched_frames.append(fetched_df)
     if fetched_frames:
         merged_cache = merge_cache_frame(cache_df, pd.concat(fetched_frames, ignore_index=True), ["trade_date", "market"], ["trade_date"])
         write_cache_frame(cache_path, merged_cache)
@@ -1229,6 +1337,7 @@ def get_market_capital_flow(trade_date: str, start_date: str, end_date: str) -> 
     filtered_df = filter_frame_by_date_range(cache_df, "trade_date", actual_start, actual_end)
     if filtered_df.empty or "trade_date" not in filtered_df.columns:
         return []
+    filtered_df = filtered_df.drop_duplicates(subset=["trade_date", "market"], keep="last")
     items: list[MarketCapitalFlowItem] = []
     for _, row in filtered_df.sort_values("trade_date").iterrows():
         items.append(

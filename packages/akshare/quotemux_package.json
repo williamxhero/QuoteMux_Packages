@@ -90,6 +90,13 @@
       "notes": "东方财富大宗交易每日明细"
     },
     {
+      "capability_id": "markets.events.news",
+      "support_level": "partial",
+      "handler_name": "get_news_events",
+      "mergeable": true,
+      "notes": "央视市场新闻和东方财富个股新闻，作为 news_store 空结果时的实时补充"
+    },
+    {
       "capability_id": "markets.indicators.main_capital_flow",
       "support_level": "native",
       "handler_name": "get_market_capital_flow",
@@ -109,6 +116,20 @@
       "handler_name": "get_dragon_tiger_institutions",
       "mergeable": true,
       "notes": "东方财富机构买卖每日统计"
+    },
+    {
+      "capability_id": "markets.participants.hot_money.details",
+      "support_level": "partial",
+      "handler_name": "get_hot_money_details",
+      "mergeable": true,
+      "notes": "东方财富活跃营业部与营业部历史明细组合映射游资交易明细"
+    },
+    {
+      "capability_id": "markets.trading.open_auctions",
+      "support_level": "partial",
+      "handler_name": "get_market_open_auctions",
+      "mergeable": true,
+      "notes": "腾讯历史分笔最新交易日 09:25 成交记录映射开盘集合竞价"
     },
     {
       "capability_id": "stocks.corporate_actions.dividends",
@@ -277,6 +298,13 @@
       "handler_name": "get_stock_quotes",
       "mergeable": true,
       "notes": ""
+    },
+    {
+      "capability_id": "stocks.quotes.auctions",
+      "support_level": "partial",
+      "handler_name": "get_auctions",
+      "mergeable": true,
+      "notes": "腾讯历史分笔最新交易日 09:25 成交记录映射开盘集合竞价"
     }
   ],
   "capability_tags": [
@@ -290,7 +318,7 @@
       "title": "超时秒数",
       "description": "HTTP 请求超时秒数",
       "required": false,
-      "default_value": "15"
+      "default_value": "60"
     }
   ],
   "secret_fields": [],
@@ -303,6 +331,7 @@
     "get_board_money_flow": "quotemux_packages.akshare.source:get_board_money_flow",
     "get_board_profile": "quotemux_packages.akshare.source:get_board_profile",
     "get_board_quotes": "quotemux_packages.akshare.source:get_board_quotes",
+    "get_auctions": "quotemux_packages.akshare.source:get_auctions",
     "get_block_trades": "quotemux_packages.akshare.source:get_block_trades",
     "get_company_profile": "quotemux_packages.akshare.source:get_company_profile",
     "get_connect_capital_flow": "quotemux_packages.akshare.source:get_connect_capital_flow",
@@ -313,10 +342,13 @@
     "get_express": "quotemux_packages.akshare.source:get_express",
     "get_forecasts": "quotemux_packages.akshare.source:get_forecasts",
     "get_hk_connect_holdings": "quotemux_packages.akshare.source:get_hk_connect_holdings",
+    "get_hot_money_details": "quotemux_packages.akshare.source:get_hot_money_details",
     "get_index_members": "quotemux_packages.akshare.source:get_index_members",
     "get_index_quotes": "quotemux_packages.akshare.source:get_index_quotes",
     "get_main_business": "quotemux_packages.akshare.source:get_main_business",
     "get_market_capital_flow": "quotemux_packages.akshare.source:get_market_capital_flow",
+    "get_market_open_auctions": "quotemux_packages.akshare.source:get_market_open_auctions",
+    "get_news_events": "quotemux_packages.akshare.source:get_news_events",
     "get_pledge_details": "quotemux_packages.akshare.source:get_pledge_details",
     "get_pledge_stats": "quotemux_packages.akshare.source:get_pledge_stats",
     "get_research_reports": "quotemux_packages.akshare.source:get_research_reports",

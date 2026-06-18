@@ -27,6 +27,13 @@
       "notes": "基于 1 分钟行情派生每日最高最低先后信号。"
     },
     {
+      "capability_id": "stocks.signals.nine_turn",
+      "support_level": "derived",
+      "handler_name": "get_nine_turn",
+      "mergeable": true,
+      "notes": "基于日线收盘价派生神奇九转 setup 信号。"
+    },
+    {
       "capability_id": "markets.calendar.trading.previous",
       "support_level": "derived",
       "handler_name": "get_previous_trading_days",
@@ -46,6 +53,27 @@
       "handler_name": "get_yearly_trading_calendar",
       "mergeable": true,
       "notes": "基于交易日历派生年度范围日历。"
+    },
+    {
+      "capability_id": "boards.members",
+      "support_level": "derived",
+      "handler_name": "get_board_members",
+      "mergeable": true,
+      "notes": "基于本地股票行业分类派生板块成分。"
+    },
+    {
+      "capability_id": "boards.quotes.daily",
+      "support_level": "derived",
+      "handler_name": "get_board_quotes",
+      "mergeable": true,
+      "notes": "基于本地板块成分和个股日线按成交额加权派生板块强弱指标。"
+    },
+    {
+      "capability_id": "boards.indicators.money_flow",
+      "support_level": "derived",
+      "handler_name": "get_board_money_flow",
+      "mergeable": true,
+      "notes": "基于本地板块成分和个股资金流派生 BK 板块资金流。"
     }
   ],
   "capability_tags": [
@@ -58,6 +86,10 @@
   "supports_multi_instance": false,
   "handler_targets": {
     "get_hl_signal": "quotemux_packages.derived_core.source:get_hl_signal",
+    "get_nine_turn": "quotemux_packages.derived_core.source:get_nine_turn",
+    "get_board_money_flow": "quotemux_packages.derived_core.source:get_board_money_flow",
+    "get_board_members": "quotemux_packages.derived_core.source:get_board_members",
+    "get_board_quotes": "quotemux_packages.derived_core.source:get_board_quotes",
     "get_next_trading_days": "quotemux_packages.derived_core.source:get_next_trading_days",
     "get_previous_trading_days": "quotemux_packages.derived_core.source:get_previous_trading_days",
     "get_shareholder_changes": "quotemux_packages.derived_core.source:get_shareholder_changes",

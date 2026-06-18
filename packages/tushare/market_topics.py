@@ -28,6 +28,12 @@ CONNECT_TOP10_DEFAULT_MARKETS = [
 ]
 
 
+def _amount_wan_to_yuan(value: object) -> object:
+    if value is None:
+        return None
+    return pd.to_numeric(value, errors="coerce") * 10000
+
+
 def _fetch_connect_flow_frame(start_value: str, end_value: str) -> pd.DataFrame:
     df = query_frame("moneyflow_hsgt", start_date=start_value, end_date=end_value)
     if df.empty:
@@ -35,12 +41,19 @@ def _fetch_connect_flow_frame(start_value: str, end_value: str) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for _, row in df.iterrows():
         trade_date = str(row["trade_date"])
+        northbound_net = row.get("north_money")
+        sh_connect_net = row.get("hgt")
+        sz_connect_net = row.get("sgt")
+        if pd.isna(northbound_net):
+            northbound_net = float(sh_connect_net) + float(sz_connect_net) if pd.notna(sh_connect_net) and pd.notna(sz_connect_net) else None
         rows.extend(
             [
-                {"trade_date": trade_date, "market": "northbound", "buy_amount": None, "sell_amount": None, "net_amount": row.get("north_money")},
-                {"trade_date": trade_date, "market": "southbound", "buy_amount": None, "sell_amount": None, "net_amount": row.get("south_money")},
-                {"trade_date": trade_date, "market": "sh_hk", "buy_amount": None, "sell_amount": None, "net_amount": row.get("ggt_ss")},
-                {"trade_date": trade_date, "market": "sz_hk", "buy_amount": None, "sell_amount": None, "net_amount": row.get("ggt_sz")},
+                {"trade_date": trade_date, "market": "northbound", "buy_amount": None, "sell_amount": None, "net_amount": _amount_wan_to_yuan(northbound_net)},
+                {"trade_date": trade_date, "market": "southbound", "buy_amount": None, "sell_amount": None, "net_amount": _amount_wan_to_yuan(row.get("south_money"))},
+                {"trade_date": trade_date, "market": "sh_connect", "buy_amount": None, "sell_amount": None, "net_amount": _amount_wan_to_yuan(sh_connect_net)},
+                {"trade_date": trade_date, "market": "sz_connect", "buy_amount": None, "sell_amount": None, "net_amount": _amount_wan_to_yuan(sz_connect_net)},
+                {"trade_date": trade_date, "market": "sh_hk", "buy_amount": None, "sell_amount": None, "net_amount": _amount_wan_to_yuan(row.get("ggt_ss"))},
+                {"trade_date": trade_date, "market": "sz_hk", "buy_amount": None, "sell_amount": None, "net_amount": _amount_wan_to_yuan(row.get("ggt_sz"))},
             ]
         )
     return pd.DataFrame(rows)
@@ -48,8 +61,11 @@ def _fetch_connect_flow_frame(start_value: str, end_value: str) -> pd.DataFrame:
 
 def get_connect_capital_flow(trade_date: str, start_date: str, end_date: str) -> list[ConnectCapitalFlowItem]:
     actual_start, actual_end = normalize_date_range(trade_date, start_date, end_date, 120)
-    cache_df = read_cached_ranges(["markets", "connect", "capital-flow"], {"scope": "all"}, "trade_date", actual_start, actual_end, "day", _fetch_connect_flow_frame)
+    cache_df = read_cached_ranges(["markets", "connect", "capital-flow"], {"scope": "all"}, "trade_date", actual_start, actual_end, "day", _fetch_connect_flow_frame, extra_key_columns=("market",))
     filtered_df = filter_frame_by_date_range(cache_df, "trade_date", actual_start, actual_end)
+    if filtered_df.empty or "trade_date" not in filtered_df.columns:
+        return []
+    filtered_df = filtered_df.drop_duplicates(subset=["trade_date", "market"], keep="last")
     return [
         ConnectCapitalFlowItem(
             trade_date=str(row["trade_date"]),

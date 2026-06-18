@@ -2,8 +2,16 @@ from __future__ import annotations
 
 import pandas as pd
 
-from platform_models import HLSignalItem, ShareholderChangeItem, ShareholderCountItem, StockQuoteItem, TechnicalFactorItem, TradingCalendarItem
+from platform_models import BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, HLSignalItem, NineTurnItem, ShareholderChangeItem, ShareholderCountItem, StockQuoteItem, TechnicalFactorItem, TradingCalendarItem
 from quotemux.infra.common import normalize_stock_code
+
+
+BOARD_STOCK_INDUSTRY_MAP = {
+    "BK1326": "半导体",
+    "BK1327": "元器件",
+    "BK1329": "半导体",
+    "BK1332": "化工原料",
+}
 
 
 def _rsi(series: pd.Series, period: int) -> pd.Series:
@@ -199,18 +207,75 @@ def get_hl_signal(code: str, trade_date: str, start_date: str, end_date: str) ->
     return _build_hl_signal_items(normalized, quote_items)
 
 
+def get_nine_turn(code: str, freq: str, trade_date: str, start_date: str, end_date: str) -> list[NineTurnItem]:
+    normalized = normalize_stock_code(code)
+    if normalized == "" or freq not in {"", "D", "daily"}:
+        return []
+    actual_trade_date = trade_date or end_date or start_date
+    request_start = start_date or trade_date
+    request_end = end_date or trade_date
+    seed_start = _offset_date_text(request_start, -60) if request_start else ""
+    quote_items = _quote_mux().stocks.get_quotes(_stock_quotes_request(normalized, "1d", "", seed_start or request_start, request_end, "none"))
+    if quote_items == []:
+        return []
+    frame = pd.DataFrame([item.model_dump() for item in quote_items])
+    frame["trade_date"] = frame["trade_time"].astype(str).str[:10]
+    frame["close"] = pd.to_numeric(frame["close"], errors="coerce")
+    frame = frame.dropna(subset=["close"]).sort_values("trade_date").reset_index(drop=True)
+    if frame.empty:
+        return []
+    up_count = 0
+    down_count = 0
+    rows: list[NineTurnItem] = []
+    for index, row in frame.iterrows():
+        if index < 4:
+            setup_index = 0
+            signal = ""
+        else:
+            previous_close = frame.iloc[index - 4]["close"]
+            current_close = row["close"]
+            if current_close > previous_close:
+                up_count += 1
+                down_count = 0
+                setup_index = up_count
+                signal = "nine_up" if up_count >= 9 else ""
+            elif current_close < previous_close:
+                down_count += 1
+                up_count = 0
+                setup_index = down_count
+                signal = "nine_down" if down_count >= 9 else ""
+            else:
+                up_count = 0
+                down_count = 0
+                setup_index = 0
+                signal = ""
+        trade_day = str(row["trade_date"])[:10]
+        if actual_trade_date and trade_day != actual_trade_date:
+            continue
+        if start_date and trade_day < start_date:
+            continue
+        if end_date and trade_day > end_date:
+            continue
+        rows.append(NineTurnItem(code=normalized, trade_time=trade_day, freq="daily", setup_index=int(setup_index), countdown_index=None, signal=signal))
+    return rows
+
+
 def get_previous_trading_days(exchange: str, trade_date: str, n: int) -> list[TradingCalendarItem]:
-    start_date = _offset_date_text(trade_date, -max(n * 8, 30))
-    items = _quote_mux().markets.get_trading_calendar(_trading_calendar_request(exchange, start_date, trade_date, True))
-    return [item for item in items if item.trade_date < trade_date][-n:]
+    from quotemux.infra.common import format_date_value
+
+    actual_trade_date = format_date_value(trade_date)
+    start_date = _offset_date_text(actual_trade_date, -max(n * 8, 30))
+    items = _quote_mux().markets.get_trading_calendar(_trading_calendar_request(exchange, start_date, actual_trade_date, True))
+    return [item for item in items if item.trade_date < actual_trade_date][-n:]
 
 
 def get_next_trading_days(exchange: str, trade_date: str, n: int) -> list[TradingCalendarItem]:
     from datetime import date
 
-    from quotemux.infra.common import parse_date_text
+    from quotemux.infra.common import format_date_value, parse_date_text
 
-    trade_day = parse_date_text(trade_date)
+    actual_trade_date = format_date_value(trade_date)
+    trade_day = parse_date_text(actual_trade_date)
     end_date = ""
     if trade_day is not None:
         try:
@@ -218,9 +283,225 @@ def get_next_trading_days(exchange: str, trade_date: str, n: int) -> list[Tradin
         except ValueError:
             next_year_day = date(trade_day.year + 1, 2, 28)
         end_date = next_year_day.strftime("%Y-%m-%d")
-    items = _quote_mux().markets.get_trading_calendar(_trading_calendar_request(exchange, trade_date, end_date, True))
-    return [item for item in items if item.trade_date > trade_date][:n]
+    items = _quote_mux().markets.get_trading_calendar(_trading_calendar_request(exchange, actual_trade_date, end_date, True))
+    return [item for item in items if item.trade_date > actual_trade_date][:n]
 
 
 def get_yearly_trading_calendar(exchange: str, start_year: int, end_year: int) -> list[TradingCalendarItem]:
     return _quote_mux().markets.get_trading_calendar(_trading_calendar_request(exchange, f"{start_year}-01-01", f"{end_year}-12-31", None))
+
+
+def get_board_members(board_code: str, trade_date: str) -> list[BoardMemberItem]:
+    del trade_date
+    normalized = str(board_code).upper()
+    industry = BOARD_STOCK_INDUSTRY_MAP.get(normalized, "")
+    if industry == "":
+        return []
+    from quotemux.infra.db.client import query_dataframe
+
+    frame = query_dataframe(
+        """
+        select
+            code,
+            name
+        from ref.stock
+        where board_type = %s
+          and (delisted_date is null or delisted_date >= current_date)
+        order by code
+        """,
+        (industry,),
+    )
+    if frame.empty:
+        return []
+    return [
+        BoardMemberItem(
+            board_code=normalized,
+            code=str(row["code"]).zfill(6),
+            name=str(row["name"]),
+            join_date="",
+        )
+        for _, row in frame.iterrows()
+    ]
+
+
+def _board_quote_date_window(trade_date: str, start_date: str, end_date: str) -> tuple[str, str]:
+    from quotemux.infra.common import format_date_value
+
+    actual_trade_date = format_date_value(trade_date)
+    if actual_trade_date != "":
+        return actual_trade_date, actual_trade_date
+    actual_start = format_date_value(start_date)
+    actual_end = format_date_value(end_date)
+    if actual_start == "":
+        actual_start = actual_end
+    if actual_end == "":
+        actual_end = actual_start
+    return actual_start, actual_end
+
+
+def _board_quote_frame(board_codes: list[str], start_date: str, end_date: str) -> pd.DataFrame:
+    from quotemux.infra.db.client import query_dataframe
+
+    if board_codes == [] or start_date == "" or end_date == "":
+        return pd.DataFrame()
+    return query_dataframe(
+        """
+        with member_rows as (
+            select
+                membership.board_code,
+                membership.stock_code as code,
+                membership.weight,
+                membership.valid_from,
+                membership.valid_to
+            from ref.board_stock_membership membership
+            where membership.board_code = any(%s)
+        ),
+        daily_rows as (
+            select
+                member_rows.board_code,
+                stock_rows.trade_date,
+                stock_rows.code,
+                stock_rows.close,
+                stock_rows.volume,
+                stock_rows.amount,
+                lag(stock_rows.close) over (partition by stock_rows.code order by stock_rows.trade_date) as pre_close
+            from member_rows
+            join fact.stock_daily_1d stock_rows on stock_rows.code = member_rows.code
+            where stock_rows.trade_date between %s and %s
+              and member_rows.valid_from <= stock_rows.trade_date
+              and (member_rows.valid_to is null or member_rows.valid_to >= stock_rows.trade_date)
+              and stock_rows.is_suspended = false
+              and stock_rows.is_st = false
+              and stock_rows.close is not null
+              and stock_rows.amount is not null
+              and stock_rows.amount > 0
+        ),
+        metric_rows as (
+            select
+                board_code,
+                trade_date,
+                volume,
+                amount,
+                (close - pre_close) / nullif(pre_close, 0) * 100 as pct_chg
+            from daily_rows
+            where pre_close is not null
+        ),
+        aggregate_rows as (
+            select
+                board_code,
+                trade_date,
+                sum(volume) as volume,
+                sum(amount) as amount,
+                sum(pct_chg * amount) / nullif(sum(amount), 0) as pct_chg,
+                count(*) as stock_count
+            from metric_rows
+            group by board_code, trade_date
+        )
+        select
+            aggregate_rows.board_code,
+            coalesce(board_ref.name, '') as board_name,
+            aggregate_rows.trade_date::text as trade_time,
+            aggregate_rows.volume,
+            aggregate_rows.amount,
+            aggregate_rows.pct_chg
+        from aggregate_rows
+        left join ref.board board_ref on board_ref.board_code = aggregate_rows.board_code
+        where aggregate_rows.stock_count > 0
+        order by aggregate_rows.board_code, aggregate_rows.trade_date
+        """,
+        (board_codes, start_date, end_date),
+    )
+
+
+def _board_quote_query_start_date(start_date: str) -> str:
+    return _offset_date_text(start_date, -45)
+
+
+def get_board_quotes(board_codes: list[str], freq: str, trade_date: str, start_date: str, end_date: str, start_time: str, end_time: str, count: int | None) -> list[BoardQuoteItem]:
+    del start_time
+    del end_time
+    if freq != "1d":
+        return []
+    normalized_codes = [str(item).upper() for item in board_codes if str(item).upper()]
+    normalized_codes = list(dict.fromkeys(normalized_codes))
+    if normalized_codes == []:
+        return []
+    actual_start, actual_end = _board_quote_date_window(trade_date, start_date, end_date)
+    if actual_start == "" or actual_end == "":
+        return []
+    query_start = _board_quote_query_start_date(actual_start)
+    if query_start == "":
+        return []
+    frame = _board_quote_frame(normalized_codes, query_start, actual_end)
+    if frame.empty:
+        return []
+    work = frame.copy()
+    work["pct_chg"] = pd.to_numeric(work["pct_chg"], errors="coerce")
+    work["amount"] = pd.to_numeric(work["amount"], errors="coerce")
+    work["volume"] = pd.to_numeric(work["volume"], errors="coerce")
+    work = work[(work["trade_time"] >= actual_start) & (work["trade_time"] <= actual_end)]
+    if count:
+        work = work.sort_values("trade_time").groupby("board_code", group_keys=False).tail(count)
+    items: list[BoardQuoteItem] = []
+    for _, row in work.iterrows():
+        items.append(
+            BoardQuoteItem(
+                board_code=str(row["board_code"]),
+                board_name=str(row["board_name"]),
+                trade_time=str(row["trade_time"]),
+                freq="1d",
+                open=None,
+                high=None,
+                low=None,
+                close=None,
+                pre_close=None,
+                change=None,
+                pct_chg=float(row["pct_chg"]) if pd.notna(row["pct_chg"]) else None,
+                volume=float(row["volume"]) if pd.notna(row["volume"]) else None,
+                amount=float(row["amount"]) if pd.notna(row["amount"]) else None,
+            )
+        )
+    return items
+
+
+def _sum_optional_column(frame: pd.DataFrame, column_name: str) -> float | None:
+    if column_name not in frame.columns:
+        return None
+    values = pd.to_numeric(frame[column_name], errors="coerce")
+    if not values.notna().any():
+        return None
+    return float(values.sum())
+
+
+def get_board_money_flow(board_code: str, trade_date: str, start_date: str, end_date: str, scope: str) -> list[BoardMoneyFlowItem]:
+    del start_date
+    del end_date
+    normalized = str(board_code).upper()
+    if normalized == "" or trade_date == "" or scope != "board":
+        return []
+    quote_mux = _quote_mux()
+    member_items = quote_mux.boards.get_members(normalized, trade_date)
+    codes = [item.code for item in member_items if item.code != ""]
+    if codes == []:
+        return []
+    flow_items = quote_mux.stocks.get_money_flow_batch(",".join(codes), trade_date, "main")
+    if flow_items == []:
+        return []
+    frame = pd.DataFrame([item.model_dump() for item in flow_items])
+    if frame.empty:
+        return []
+    inflow = _sum_optional_column(frame, "main_inflow")
+    outflow = _sum_optional_column(frame, "main_outflow")
+    net_inflow = _sum_optional_column(frame, "net_inflow")
+    if inflow is None and outflow is None and net_inflow is None:
+        return []
+    return [
+        BoardMoneyFlowItem(
+            board_code=normalized,
+            trade_date=trade_date,
+            scope=scope,
+            inflow=inflow,
+            outflow=outflow,
+            net_inflow=net_inflow,
+        )
+    ]
