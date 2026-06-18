@@ -50,6 +50,8 @@ def get_connect_capital_flow(trade_date: str, start_date: str, end_date: str) ->
     actual_start, actual_end = normalize_date_range(trade_date, start_date, end_date, 120)
     cache_df = read_cached_ranges(["markets", "connect", "capital-flow"], {"scope": "all"}, "trade_date", actual_start, actual_end, "day", _fetch_connect_flow_frame)
     filtered_df = filter_frame_by_date_range(cache_df, "trade_date", actual_start, actual_end)
+    if filtered_df.empty or "trade_date" not in filtered_df.columns:
+        return []
     return [
         ConnectCapitalFlowItem(
             trade_date=str(row["trade_date"]),
