@@ -387,6 +387,10 @@ def get_stock_quotes(
             else:
                 fetched_df = _fetch_stock_daily_frame(normalized_code, freq, start_dt, end_dt, adjust)
             if not fetched_df.empty:
+                if cache_incomplete and {"code", "trade_time", "freq"}.issubset(set(cache_df.columns)):
+                    fetched_keys = set(zip(fetched_df["code"], fetched_df["trade_time"], fetched_df["freq"]))
+                    cache_keys = list(zip(cache_df["code"], cache_df["trade_time"], cache_df["freq"]))
+                    cache_df = cache_df[[key not in fetched_keys for key in cache_keys]]
                 cache_df = merge_cache_frame(cache_df, fetched_df, ["code", "trade_time", "freq"], ["trade_time"])
                 write_cache_frame(cache_path, cache_df)
         filtered_df = filter_frame_by_datetime_range(cache_df, "trade_time", start_dt, end_dt)
