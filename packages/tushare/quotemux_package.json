@@ -342,6 +342,13 @@
       "notes": ""
     },
     {
+      "capability_id": "stocks.indicators.money_flow.batch",
+      "support_level": "native",
+      "handler_name": "get_stock_money_flow_batch",
+      "mergeable": true,
+      "notes": ""
+    },
+    {
       "capability_id": "stocks.indicators.premarket",
       "support_level": "native",
       "handler_name": "get_premarket",
@@ -595,6 +602,7 @@
     "get_stock_financial_statements": "quotemux_packages.tushare.source:get_stock_financial_statements",
     "get_stock_finance_indicators": "quotemux_packages.tushare.source:get_stock_finance_indicators",
     "get_stock_money_flow": "quotemux_packages.tushare.source:get_stock_money_flow",
+    "get_stock_money_flow_batch": "quotemux_packages.tushare.source:get_stock_money_flow_batch",
     "get_stock_name_history": "quotemux_packages.tushare.source:get_stock_name_history",
     "get_stock_quotes": "quotemux_packages.tushare.source:get_stock_quotes",
     "get_stock_risk_flags": "quotemux_packages.tushare.source:get_stock_risk_flags",

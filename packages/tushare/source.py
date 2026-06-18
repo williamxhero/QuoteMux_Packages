@@ -1033,6 +1033,22 @@ def _fetch_money_flow_frame(code: str, start_value: str, end_value: str, view: s
     return work[["code", "trade_date", "view", "main_inflow", "main_outflow", "net_inflow"]]
 
 
+def _money_flow_items_from_frame(frame: pd.DataFrame) -> list[StockMoneyFlowItem]:
+    items: list[StockMoneyFlowItem] = []
+    for _, row in frame.sort_values(["code", "trade_date"]).iterrows():
+        items.append(
+            StockMoneyFlowItem(
+                code=str(row["code"]),
+                trade_date=str(row["trade_date"]),
+                view=str(row["view"]),
+                main_inflow=float(row["main_inflow"]) if pd.notna(row["main_inflow"]) else None,
+                main_outflow=float(row["main_outflow"]) if pd.notna(row["main_outflow"]) else None,
+                net_inflow=float(row["net_inflow"]) if pd.notna(row["net_inflow"]) else None,
+            )
+        )
+    return items
+
+
 def get_stock_money_flow(code: str, trade_date: str, start_date: str, end_date: str, view: str) -> list[StockMoneyFlowItem]:
     actual_start = trade_date or start_date
     actual_end = trade_date or end_date
@@ -1062,19 +1078,25 @@ def get_stock_money_flow(code: str, trade_date: str, start_date: str, end_date: 
     filtered_df = filter_frame_by_date_range(cache_df, "trade_date", actual_start, actual_end)
     if filtered_df.empty or "trade_date" not in filtered_df.columns:
         return []
+    return _money_flow_items_from_frame(filtered_df)
+
+
+def get_stock_money_flow_batch(codes: str, trade_date: str, view: str) -> list[StockMoneyFlowItem]:
+    actual_codes = [normalize_stock_code(item) for item in codes.split(",") if normalize_stock_code(item)]
+    actual_trade_date = format_date_value(trade_date)
+    if actual_codes == [] or actual_trade_date == "":
+        return []
     items: list[StockMoneyFlowItem] = []
-    for _, row in filtered_df.sort_values("trade_date").iterrows():
-        items.append(
-            StockMoneyFlowItem(
-                code=str(row["code"]),
-                trade_date=str(row["trade_date"]),
-                view=str(row["view"]),
-                main_inflow=float(row["main_inflow"]) if pd.notna(row["main_inflow"]) else None,
-                main_outflow=float(row["main_outflow"]) if pd.notna(row["main_outflow"]) else None,
-                net_inflow=float(row["net_inflow"]) if pd.notna(row["net_inflow"]) else None,
-            )
-        )
-    return items
+    for code in dict.fromkeys(actual_codes):
+        items.extend(get_stock_money_flow(code, actual_trade_date, "", "", view))
+    return sorted(items, key=lambda item: (item.code, item.trade_date, item.view))
+
+
+def _first_existing_column(frame: pd.DataFrame, column_names: tuple[str, ...]) -> object:
+    for column_name in column_names:
+        if column_name in frame.columns:
+            return frame[column_name]
+    return None
 
 
 def board_code_to_ts(board_code: str) -> str:
@@ -1104,9 +1126,9 @@ def _fetch_board_money_flow_frame(board_code: str, start_value: str, end_value: 
     code_column = "ts_code" if "ts_code" in work.columns else "code"
     work["board_code"] = work[code_column].astype(str).str.split(".").str[0]
     work["scope"] = scope
-    work["inflow"] = work["net_buy_amount"] if "net_buy_amount" in work.columns else None
-    work["outflow"] = work["net_sell_amount"] if "net_sell_amount" in work.columns else None
-    work["net_inflow"] = work["net_amount"] if "net_amount" in work.columns else None
+    work["inflow"] = _first_existing_column(work, ("net_buy_amount", "buy_amount", "buy_elg_amount"))
+    work["outflow"] = _first_existing_column(work, ("net_sell_amount", "sell_amount", "sell_elg_amount"))
+    work["net_inflow"] = _first_existing_column(work, ("net_amount", "net_buy", "net_mf_amount", "net_inflow"))
     return work[["board_code", "trade_date", "scope", "inflow", "outflow", "net_inflow"]]
 
 
