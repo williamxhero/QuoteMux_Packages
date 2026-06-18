@@ -394,8 +394,17 @@ def get_stock_quotes(
                 cache_df = merge_cache_frame(cache_df, fetched_df, ["code", "trade_time", "freq"], ["trade_time"])
                 write_cache_frame(cache_path, cache_df)
         filtered_df = filter_frame_by_datetime_range(cache_df, "trade_time", start_dt, end_dt)
+        if not freq.endswith("m") and _is_single_day_window(start_dt, end_dt) and not cache_df.empty and "trade_time" in cache_df.columns:
+            cache_times = pd.to_datetime(cache_df["trade_time"], errors="coerce")
+            previous_df = cache_df[cache_times < start_dt]
+            previous_df = latest_n_rows(previous_df, "trade_time", 1)
+            if not previous_df.empty:
+                filtered_df = merge_cache_frame(previous_df, filtered_df, ["code", "trade_time", "freq"], ["trade_time"])
         filtered_df = latest_n_rows(filtered_df, "trade_time", count)
-        items.extend(_frame_to_stock_quotes(filtered_df, freq, adjust))
+        quote_items = _frame_to_stock_quotes(filtered_df, freq, adjust)
+        if not freq.endswith("m") and _is_single_day_window(start_dt, end_dt):
+            quote_items = [item for item in quote_items if item.trade_time == start_dt.strftime("%Y-%m-%d")]
+        items.extend(quote_items)
     return items
 
 
