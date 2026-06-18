@@ -353,6 +353,13 @@ def _is_single_day_window(start_dt: datetime, end_dt: datetime) -> bool:
     return start_dt.date() == end_dt.date()
 
 
+def _stock_daily_cache_complete(frame: pd.DataFrame) -> bool:
+    required_columns = {"close", "pre_close", "change", "pct_chg", "amount"}
+    if frame.empty or not required_columns.issubset(set(frame.columns)):
+        return False
+    return not frame[list(required_columns)].isna().any(axis=1).any()
+
+
 def get_stock_quotes(
     codes: list[str],
     freq: str,
@@ -373,7 +380,8 @@ def get_stock_quotes(
         cache_path = build_cache_path("akshare", ["stocks", "quotes"], {"code": normalized_code, "freq": freq, "adjust": adjust})
         cache_df = read_cache_frame(cache_path)
         filtered_cache = filter_frame_by_datetime_range(cache_df, "trade_time", start_dt, end_dt)
-        if filtered_cache.empty or (count and len(filtered_cache) < count):
+        cache_incomplete = not freq.endswith("m") and not _stock_daily_cache_complete(filtered_cache)
+        if filtered_cache.empty or cache_incomplete or (count and len(filtered_cache) < count):
             if freq.endswith("m"):
                 fetched_df = _fetch_stock_intraday_frame(normalized_code, freq, start_dt, end_dt)
             else:
