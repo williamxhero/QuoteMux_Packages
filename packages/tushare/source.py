@@ -1227,6 +1227,8 @@ def get_market_capital_flow(trade_date: str, start_date: str, end_date: str) -> 
         write_cache_frame(cache_path, merged_cache)
         cache_df = merged_cache
     filtered_df = filter_frame_by_date_range(cache_df, "trade_date", actual_start, actual_end)
+    if filtered_df.empty or "trade_date" not in filtered_df.columns:
+        return []
     items: list[MarketCapitalFlowItem] = []
     for _, row in filtered_df.sort_values("trade_date").iterrows():
         items.append(

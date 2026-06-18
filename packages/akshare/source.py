@@ -176,15 +176,18 @@ def _resolve_time_window(
 
 
 def _fetch_stock_daily_frame(code: str, freq: str, start_dt: datetime, end_dt: datetime, adjust: str) -> pd.DataFrame:
-    result = _call_ak(
-        "stock_zh_a_hist",
-        ak.stock_zh_a_hist,
-        symbol=normalize_stock_code(code),
-        period=AKSHARE_PERIOD_MAP[freq],
-        start_date=start_dt.strftime("%Y%m%d"),
-        end_date=end_dt.strftime("%Y%m%d"),
-        adjust="" if adjust == "none" else adjust,
-    )
+    try:
+        result = _call_ak(
+            "stock_zh_a_hist",
+            ak.stock_zh_a_hist,
+            symbol=normalize_stock_code(code),
+            period=AKSHARE_PERIOD_MAP[freq],
+            start_date=start_dt.strftime("%Y%m%d"),
+            end_date=end_dt.strftime("%Y%m%d"),
+            adjust="" if adjust == "none" else adjust,
+        )
+    except Exception:
+        return pd.DataFrame()
     if result is None or result.empty:
         return pd.DataFrame()
     work = result.copy()
@@ -197,7 +200,12 @@ def _fetch_stock_daily_frame(code: str, freq: str, start_dt: datetime, end_dt: d
     work["close"] = pd.to_numeric(work["收盘"], errors="coerce")
     work["volume"] = pd.to_numeric(work["成交量"], errors="coerce")
     work["amount"] = pd.to_numeric(work["成交额"], errors="coerce")
-    work = work[["code", "trade_time", "freq", "open", "high", "low", "close", "volume", "amount"]]
+    work["change"] = pd.to_numeric(work["涨跌额"], errors="coerce") if "涨跌额" in work.columns else pd.NA
+    work["pct_chg"] = pd.to_numeric(work["涨跌幅"], errors="coerce") if "涨跌幅" in work.columns else pd.NA
+    work["pre_close"] = work["close"] - work["change"]
+    missing_pre_close = work["pre_close"].isna() & work["close"].notna() & work["pct_chg"].notna() & (work["pct_chg"] != -100)
+    work.loc[missing_pre_close, "pre_close"] = work.loc[missing_pre_close, "close"] / (1 + work.loc[missing_pre_close, "pct_chg"] / 100)
+    work = work[["code", "trade_time", "freq", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume", "amount"]]
     work = work.dropna(subset=["trade_time"])
     work, _ = calibrate_quote_units(work)
     return work.drop_duplicates(subset=["code", "trade_time", "freq"], keep="last").sort_values("trade_time").reset_index(drop=True)
@@ -272,9 +280,16 @@ def _frame_to_stock_quotes(df: pd.DataFrame, freq: str, adjust: str) -> list[Sto
     if df.empty:
         return items
     work = df.sort_values("trade_time").copy()
-    work["pre_close"] = work["close"].shift(1)
-    work["change"] = work["close"] - work["pre_close"]
-    work["pct_chg"] = work["change"] / work["pre_close"] * 100
+    if "pre_close" not in work.columns:
+        work["pre_close"] = pd.NA
+    if "change" not in work.columns:
+        work["change"] = pd.NA
+    if "pct_chg" not in work.columns:
+        work["pct_chg"] = pd.NA
+    shifted_pre_close = work["close"].shift(1)
+    work["pre_close"] = work["pre_close"].fillna(shifted_pre_close)
+    work["change"] = work["change"].fillna(work["close"] - work["pre_close"])
+    work["pct_chg"] = work["pct_chg"].fillna(work["change"] / work["pre_close"] * 100)
     for _, row in work.iterrows():
         items.append(
             StockQuoteItem(
