@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from quotemux.infra.cache.store import filter_frame_by_date_range
+from quotemux.infra.cache.store import build_cache_path, filter_frame_by_date_range, merge_cache_frame, read_cache_frame, write_cache_frame
 from platform_models import AuditItem, DisclosureDateItem, DividendItem, ExpressItem, ForecastItem, MainBusinessItem, RepurchaseItem, RightsIssueItem, ShareChangeItem, UnlockScheduleItem
 from quotemux.infra.common import normalize_stock_code, stock_code_to_ts
 from .helpers import normalize_date_range, normalize_period_range, query_frame, read_cached_ranges
@@ -123,15 +123,7 @@ def get_rights_issues(code: str, start_date: str, end_date: str) -> list[RightsI
 
 def get_share_changes(code: str, trade_date: str, start_date: str, end_date: str) -> list[ShareChangeItem]:
     actual_start, actual_end = normalize_date_range(trade_date, start_date, end_date, 1440)
-    cache_df = read_cached_ranges(
-        ["stocks", "corporate-actions", "share-changes"],
-        {"code": normalize_stock_code(code)},
-        "change_date",
-        actual_start,
-        actual_end,
-        "day",
-        lambda start_value, end_value: _fetch_share_change_frame(code, start_value, end_value),
-    )
+    cache_df = _read_share_change_frame(code, actual_start, actual_end)
     filtered_df = filter_frame_by_date_range(cache_df, "change_date", actual_start, actual_end)
     if filtered_df.empty or "change_date" not in filtered_df.columns:
         return []
@@ -146,6 +138,21 @@ def get_share_changes(code: str, trade_date: str, start_date: str, end_date: str
         )
         for _, row in filtered_df.sort_values("change_date").iterrows()
     ]
+
+
+def _read_share_change_frame(code: str, start_value: str, end_value: str) -> pd.DataFrame:
+    normalized_code = normalize_stock_code(code)
+    cache_path = build_cache_path("tushare", ["stocks", "corporate-actions", "share-changes"], {"code": normalized_code})
+    cache_df = read_cache_frame(cache_path)
+    filtered_df = filter_frame_by_date_range(cache_df, "change_date", start_value, end_value)
+    if not filtered_df.empty:
+        return cache_df
+    fetched_df = _fetch_share_change_frame(code, start_value, end_value)
+    if fetched_df.empty:
+        return cache_df
+    merged_df = merge_cache_frame(cache_df, fetched_df, ["code", "change_date", "reason"], ["change_date"])
+    write_cache_frame(cache_path, merged_df)
+    return merged_df
 
 
 def _fetch_rights_issue_frame(code: str, start_value: str, end_value: str) -> pd.DataFrame:
@@ -285,7 +292,10 @@ def get_unlock_schedules(code: str, unlock_date: str, start_date: str, end_date:
 
 
 def _fetch_audit_frame(code: str, start_value: str, end_value: str) -> pd.DataFrame:
-    df = query_frame("fina_audit", ts_code=stock_code_to_ts(code), start_date=start_value, end_date=end_value)
+    if start_value == end_value:
+        df = query_frame("fina_audit", ts_code=stock_code_to_ts(code), period=start_value)
+    else:
+        df = query_frame("fina_audit", ts_code=stock_code_to_ts(code), start_date=start_value, end_date=end_value)
     if df.empty:
         return df
     work = df.copy()

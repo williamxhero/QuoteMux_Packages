@@ -265,6 +265,13 @@
       "notes": "巨潮资讯公司概况，经理和员工数无稳定字段"
     },
     {
+      "capability_id": "rankings.research.reports",
+      "support_level": "partial",
+      "handler_name": "get_rank_research_reports",
+      "mergeable": true,
+      "notes": "东方财富研报列表"
+    },
+    {
       "capability_id": "stocks.research.reports",
       "support_level": "partial",
       "handler_name": "get_research_reports",
@@ -351,6 +358,7 @@
     "get_news_events": "quotemux_packages.akshare.source:get_news_events",
     "get_pledge_details": "quotemux_packages.akshare.source:get_pledge_details",
     "get_pledge_stats": "quotemux_packages.akshare.source:get_pledge_stats",
+    "get_rank_research_reports": "quotemux_packages.akshare.source:get_rank_research_reports",
     "get_research_reports": "quotemux_packages.akshare.source:get_research_reports",
     "get_repurchases": "quotemux_packages.akshare.source:get_repurchases",
     "get_rights_issues": "quotemux_packages.akshare.source:get_rights_issues",

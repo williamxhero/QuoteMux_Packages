@@ -43,7 +43,7 @@ from quotemux.infra.cache.store import build_cache_path, filter_frame_by_date_ra
 from quotemux.infra.common import add_quote_metrics, aggregate_ohlc, build_time_bounds, format_date_value, format_datetime_value, normalize_index_code, normalize_stock_code, split_csv
 from quotemux.runtime_core.quality import build_akshare_index_symbol, calibrate_quote_units
 from quotemux.infra.provider_runtime.core import call_provider_api
-from platform_models import AuctionItem, BlockTradeItem, BoardCatalogItem, BoardCategoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, ConnectCapitalFlowItem, DisclosureDateItem, DividendItem, DragonTigerInstitutionItem, DragonTigerItem, ExpressItem, ForecastItem, HKConnectHoldingItem, HotMoneyDetailItem, IndexMemberItem, IndexQuoteItem, MainBusinessItem, MarketCapitalFlowItem, NewsEventItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockFinanceIndicatorItem, StockFinancialStatementItem, StockMoneyFlowItem, StockProfileItem, StockQuoteItem, SurveyItem, TradingCalendarItem, UnlockScheduleItem
+from platform_models import AuctionItem, BlockTradeItem, BoardCatalogItem, BoardCategoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, ConnectCapitalFlowItem, DisclosureDateItem, DividendItem, DragonTigerInstitutionItem, DragonTigerItem, ExpressItem, ForecastItem, HKConnectHoldingItem, HotMoneyDetailItem, IndexMemberItem, IndexQuoteItem, MainBusinessItem, MarketCapitalFlowItem, NewsEventItem, PledgeDetailItem, PledgeStatItem, RankingResearchReportItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockFinanceIndicatorItem, StockFinancialStatementItem, StockMoneyFlowItem, StockProfileItem, StockQuoteItem, SurveyItem, TradingCalendarItem, UnlockScheduleItem
 
 
 DEFAULT_LOOKBACK_DAYS = 30
@@ -151,6 +151,68 @@ def _date_window(trade_date: str, start_date: str, end_date: str, lookback_days:
 
 def _date_range_from_request(trade_date: str, start_date: str, end_date: str, lookback_days: int) -> tuple[str, str]:
     return _date_window(trade_date, start_date, end_date, lookback_days)
+
+
+def _column_value(row: pd.Series, names: tuple[str, ...]) -> object:
+    for name in names:
+        if name in row and pd.notna(row[name]):
+            return row[name]
+    return ""
+
+
+def _report_date_value(value: object) -> str:
+    actual_date = format_date_value(value)
+    if len(actual_date) == 10:
+        return actual_date
+    parsed_date = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed_date):
+        return actual_date
+    return parsed_date.strftime("%Y-%m-%d")
+
+
+def _period_candidates(report_period: str, start_period: str, end_period: str) -> list[str]:
+    actual_period = format_date_value(report_period)
+    if actual_period:
+        return [actual_period]
+    actual_start = format_date_value(start_period)
+    actual_end = format_date_value(end_period)
+    if actual_start == "" or actual_end == "":
+        return []
+    start_dt = datetime.strptime(actual_start, "%Y-%m-%d")
+    end_dt = datetime.strptime(actual_end, "%Y-%m-%d")
+    rows: list[str] = []
+    for year in range(start_dt.year, end_dt.year + 1):
+        for month, day in ((3, 31), (6, 30), (9, 30), (12, 31)):
+            current = datetime(year, month, day)
+            if start_dt <= current <= end_dt:
+                rows.append(current.strftime("%Y-%m-%d"))
+    return rows
+
+
+def _em_secucode(code: str) -> str:
+    normalized_code = normalize_stock_code(code)
+    market = "1" if normalized_code.startswith("6") else "0"
+    if normalized_code.startswith(("4", "8", "9")):
+        market = "0"
+    return f"{market}.{normalized_code}"
+
+
+def _em_prefixed_stock_code(code: str) -> str:
+    normalized_code = normalize_stock_code(code)
+    prefix = "SH" if normalized_code.startswith("6") else "SZ"
+    if normalized_code.startswith(("4", "8", "9")):
+        prefix = "BJ"
+    return f"{prefix}{normalized_code}"
+
+
+def _ak_secucode(code: str) -> str:
+    return _em_secucode(code)
+
+
+def _ak_financial_symbol(code: str) -> str:
+    normalized_code = normalize_stock_code(code)
+    suffix = "SH" if normalized_code.startswith("6") else "SZ"
+    return f"{normalized_code}.{suffix}"
 
 
 def _date_in_window(value: str, start_value: str, end_value: str) -> bool:
@@ -1133,6 +1195,14 @@ def get_hot_money_details(trade_date: str, start_date: str, end_date: str, name:
     active_frame = _call_ak("stock_lhb_hyyyb_em", ak.stock_lhb_hyyyb_em, start_date=actual_start.replace("-", ""), end_date=actual_end.replace("-", ""))
     if active_frame is None or active_frame.empty:
         return []
+    detail_frame = _call_ak("stock_lhb_detail_em", ak.stock_lhb_detail_em, start_date=actual_start.replace("-", ""), end_date=actual_end.replace("-", ""))
+    stock_code_by_name: dict[str, str] = {}
+    if detail_frame is not None and not detail_frame.empty and "名称" in detail_frame.columns and "代码" in detail_frame.columns:
+        for _, detail_row in detail_frame.iterrows():
+            stock_name = str(detail_row.get("名称", ""))
+            stock_code = normalize_stock_code(str(detail_row.get("代码", "")))
+            if stock_name != "" and stock_code != "":
+                stock_code_by_name[stock_name] = stock_code
     work = active_frame.copy()
     if "上榜日" in work.columns:
         work["上榜日"] = pd.to_datetime(work["上榜日"], errors="coerce")
@@ -1145,6 +1215,37 @@ def get_hot_money_details(trade_date: str, start_date: str, end_date: str, name:
     collected: list[HotMoneyDetailItem] = []
     seen: set[tuple[str, str, str]] = set()
     max_departments = min(max(limit, 6), 12)
+    for _, active_row in work.head(max_departments).iterrows():
+        row_date = format_date_value(active_row.get("上榜日", ""))
+        department_name = str(active_row.get("营业部名称", ""))
+        if name and name not in department_name:
+            continue
+        buy_stock_text = str(active_row.get("买入股票", ""))
+        stock_names = [item for item in buy_stock_text.split(" ") if item != ""]
+        for stock_name in stock_names:
+            row_code = stock_code_by_name.get(stock_name, "")
+            if row_code == "":
+                continue
+            key = (row_date, department_name, row_code)
+            if key in seen:
+                continue
+            seen.add(key)
+            collected.append(
+                HotMoneyDetailItem(
+                    trade_date=row_date,
+                    name=department_name,
+                    code=row_code,
+                    stock_name=stock_name,
+                    buy_amount=None,
+                    sell_amount=None,
+                    net_amount=None,
+                )
+            )
+            if len(collected) >= limit:
+                return sorted(collected, key=lambda item: (item.trade_date, item.name, item.code), reverse=True)[:limit]
+    if collected != []:
+        return sorted(collected, key=lambda item: (item.trade_date, item.name, item.code), reverse=True)[:limit]
+
     for _, active_row in work.head(max_departments).iterrows():
         department_code = str(active_row.get("营业部代码", ""))
         if department_code == "":
@@ -1226,7 +1327,22 @@ def get_auctions(code: str, session: str, trade_date: str, start_date: str, end_
     actual_session = session or "open"
     if actual_session != "open":
         return []
-    actual_trade_date = format_date_value(trade_date or end_date or start_date)
+    actual_trade_date = format_date_value(trade_date)
+    if actual_trade_date == "":
+        latest_trade_date = _latest_akshare_trade_date()
+        actual_start = format_date_value(start_date)
+        actual_end = format_date_value(end_date)
+        if actual_start == "" and actual_end == "":
+            actual_trade_date = latest_trade_date
+        else:
+            if actual_start == "":
+                actual_start = actual_end
+            if actual_end == "":
+                actual_end = actual_start
+            if actual_start <= latest_trade_date <= actual_end:
+                actual_trade_date = latest_trade_date
+            else:
+                actual_trade_date = actual_end
     item = _open_auction_from_tick(code, actual_trade_date)
     return [] if item is None else [item]
 
@@ -1484,11 +1600,12 @@ def get_shareholder_top10(code: str, report_period: str, start_period: str, end_
         return []
     items: list[ShareholderTop10Item] = []
     for period in periods:
+        ak_period = period.replace("-", "")
         if float_only:
-            result = _call_ak("stock_gdfx_free_top_10_em", ak.stock_gdfx_free_top_10_em, symbol=_em_prefixed_stock_code(normalized_code), date=period)
+            result = _call_ak("stock_gdfx_free_top_10_em", ak.stock_gdfx_free_top_10_em, symbol=_em_prefixed_stock_code(normalized_code), date=ak_period)
             ratio_column = "占总流通股本持股比例"
         else:
-            result = _call_ak("stock_gdfx_top_10_em", ak.stock_gdfx_top_10_em, symbol=_em_prefixed_stock_code(normalized_code), date=period)
+            result = _call_ak("stock_gdfx_top_10_em", ak.stock_gdfx_top_10_em, symbol=_em_prefixed_stock_code(normalized_code), date=ak_period)
             ratio_column = "占总股本持股比例"
         if result is None or result.empty:
             continue
@@ -1742,7 +1859,7 @@ def get_express(code: str, report_period: str, start_period: str, end_period: st
     periods = _period_candidates(report_period, start_period, end_period)
     items: list[ExpressItem] = []
     for period in periods:
-        result = _call_ak("stock_yjkb_em", ak.stock_yjkb_em, date=period)
+        result = _call_ak("stock_yjkb_em", ak.stock_yjkb_em, date=period.replace("-", ""))
         if result is None or result.empty:
             continue
         for _, row in result.iterrows():
@@ -1770,7 +1887,7 @@ def get_forecasts(code: str, report_period: str, start_period: str, end_period: 
     periods = _period_candidates(report_period, start_period, end_period)
     items: list[ForecastItem] = []
     for period in periods:
-        result = _call_ak("stock_yjyg_em", ak.stock_yjyg_em, date=period)
+        result = _call_ak("stock_yjyg_em", ak.stock_yjyg_em, date=period.replace("-", ""))
         if result is None or result.empty:
             continue
         for _, row in result.iterrows():
@@ -1803,7 +1920,7 @@ def get_stock_finance_indicators(code: str, codes: str, report_period: str, star
         if result is None or result.empty:
             continue
         for _, row in result.iterrows():
-            row_period = format_date_value(_column_value(row, ("REPORT_DATE", "报告期", "日期")))
+            row_period = _report_date_value(_column_value(row, ("REPORT_DATE", "报告期", "日期")))
             if periods and row_period not in periods:
                 continue
             items.append(
@@ -1855,10 +1972,10 @@ def get_main_business(code: str, report_period: str, start_period: str, end_peri
 
 
 def _financial_statement_frame(code: str, report_type: str) -> pd.DataFrame:
-    symbol = _ak_secucode(code)
+    symbol = _ak_financial_symbol(code)
     if report_type == "balance_sheet":
         return _call_ak("stock_balance_sheet_by_report_em", ak.stock_balance_sheet_by_report_em, symbol=symbol)
-    if report_type == "cash_flow":
+    if report_type == "cash_flow_statement":
         return _call_ak("stock_cash_flow_sheet_by_report_em", ak.stock_cash_flow_sheet_by_report_em, symbol=symbol)
     return _call_ak("stock_profit_sheet_by_report_em", ak.stock_profit_sheet_by_report_em, symbol=symbol)
 
@@ -1872,7 +1989,7 @@ def get_stock_financial_statements(codes: list[str], report_period: str, start_p
         if result is None or result.empty:
             continue
         for _, row in result.iterrows():
-            row_period = format_date_value(_column_value(row, ("REPORT_DATE", "报告期", "日期")))
+            row_period = _report_date_value(_column_value(row, ("REPORT_DATE", "报告期", "日期")))
             if periods and row_period not in periods:
                 continue
             items.append(
@@ -1880,7 +1997,7 @@ def get_stock_financial_statements(codes: list[str], report_period: str, start_p
                     code=normalized_code,
                     report_period=row_period,
                     report_type=report_type,
-                    announce_date=format_date_value(_column_value(row, ("NOTICE_DATE", "公告日期", "UPDATE_DATE"))),
+                    announce_date=_report_date_value(_column_value(row, ("NOTICE_DATE", "公告日期", "UPDATE_DATE"))),
                     revenue=_float_value(_column_value(row, ("TOTAL_OPERATE_INCOME", "OPERATE_INCOME", "营业总收入", "营业收入"))),
                     operating_profit=_float_value(_column_value(row, ("OPERATE_PROFIT", "营业利润"))),
                     total_profit=_float_value(_column_value(row, ("TOTAL_PROFIT", "利润总额"))),
@@ -1935,6 +2052,80 @@ def get_research_reports(code: str, report_date: str, start_date: str, end_date:
             )
         )
     return sorted(items, key=lambda item: (item.code, item.report_date, item.institution, item.title))
+
+
+def _eastmoney_report_date_value(value: object) -> str:
+    actual_date = format_date_value(value)
+    if len(actual_date) == 10:
+        return actual_date
+    parsed_date = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed_date):
+        return actual_date
+    return parsed_date.strftime("%Y-%m-%d")
+
+
+def get_rank_research_reports(trade_date: str, start_date: str, end_date: str, limit: int) -> list[RankingResearchReportItem]:
+    actual_start, actual_end = _date_range_from_request(trade_date, start_date, end_date, 365)
+    page_size = max(1, min(limit, 100))
+    params = {
+        "industryCode": "*",
+        "pageSize": str(page_size),
+        "industry": "*",
+        "rating": "*",
+        "ratingChange": "*",
+        "beginTime": actual_start,
+        "endTime": actual_end,
+        "pageNo": "1",
+        "fields": "",
+        "qType": "0",
+        "orgCode": "",
+        "code": "",
+        "rcode": "",
+        "p": "1",
+        "pageNum": "1",
+        "pageNumber": "1",
+    }
+    rows: list[dict[str, object]] = []
+    total_page = 1
+    for page in range(1, total_page + 1):
+        params["pageNo"] = str(page)
+        params["p"] = str(page)
+        params["pageNum"] = str(page)
+        params["pageNumber"] = str(page)
+        response = call_provider_api("akshare", "stock_research_report_rank_em", requests.get, "https://reportapi.eastmoney.com/report/list", params=params)
+        payload = response.json()
+        total_page = int(payload.get("TotalPage", total_page) or total_page)
+        page_rows = payload.get("data", [])
+        if isinstance(page_rows, list):
+            rows.extend([row for row in page_rows if isinstance(row, dict)])
+        if len(rows) >= limit:
+            break
+    items: list[RankingResearchReportItem] = []
+    for row in rows[:limit]:
+        row_date = _eastmoney_report_date_value(row.get("publishDate", ""))
+        if not _date_in_window(row_date, actual_start, actual_end):
+            continue
+        institution = _text_value(row.get("orgSName", ""))
+        if institution == "":
+            institution = _text_value(row.get("orgName", ""))
+        rating = _text_value(row.get("emRatingName", ""))
+        if rating == "":
+            rating = _text_value(row.get("sRatingName", ""))
+        target_price = _float_value(row.get("indvAimPriceT", None))
+        if target_price is None:
+            target_price = _float_value(row.get("indvAimPriceL", None))
+        items.append(
+            RankingResearchReportItem(
+                trade_date=row_date,
+                code=normalize_stock_code(str(row.get("stockCode", ""))),
+                name=_text_value(row.get("stockName", "")),
+                institution=institution,
+                rating=rating,
+                target_price=target_price,
+                title=_text_value(row.get("title", "")),
+            )
+        )
+    return sorted(items, key=lambda item: (item.trade_date, item.code, item.institution, item.title))
 
 
 def get_surveys(code: str, survey_date: str, start_date: str, end_date: str) -> list[SurveyItem]:

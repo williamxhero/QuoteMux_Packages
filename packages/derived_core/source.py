@@ -68,6 +68,33 @@ def _stock_quotes_request(
     )
 
 
+def _local_stock_bar_1m_items(code: str, start_date: str, end_date: str) -> list[StockQuoteItem]:
+    from quotemux.infra.common import format_datetime_value
+    from quotemux.infra.db.market_reads import load_stock_intraday_frame
+
+    if code == "" or start_date == "" or end_date == "":
+        return []
+    frame = load_stock_intraday_frame([code], f"{start_date} 00:00:00", f"{end_date} 23:59:59", "1m")
+    if frame.empty:
+        return []
+    items: list[StockQuoteItem] = []
+    for _, row in frame.iterrows():
+        items.append(
+            StockQuoteItem(
+                code=str(row["code"]),
+                trade_time=format_datetime_value(row["trade_time"], "1m"),
+                freq="1m",
+                open=float(row["open"]) if pd.notna(row["open"]) else None,
+                high=float(row["high"]) if pd.notna(row["high"]) else None,
+                low=float(row["low"]) if pd.notna(row["low"]) else None,
+                close=float(row["close"]) if pd.notna(row["close"]) else None,
+                volume=float(row["volume"]) if pd.notna(row["volume"]) else None,
+                amount=float(row["amount"]) if pd.notna(row["amount"]) else None,
+            )
+        )
+    return items
+
+
 def _build_technical_factor_items(quote_items: list[StockQuoteItem], adjust: str) -> list[TechnicalFactorItem]:
     if quote_items == []:
         return []
@@ -208,20 +235,30 @@ def get_hl_signal(code: str, trade_date: str, start_date: str, end_date: str) ->
 
 
 def get_nine_turn(code: str, freq: str, trade_date: str, start_date: str, end_date: str) -> list[NineTurnItem]:
+    from quotemux.infra.common import format_date_value
+
     normalized = normalize_stock_code(code)
-    if normalized == "" or freq not in {"", "D", "daily"}:
+    actual_freq = freq or "daily"
+    quote_freq = "1d" if actual_freq in {"D", "daily"} else actual_freq
+    if normalized == "":
         return []
-    actual_trade_date = trade_date or end_date or start_date
-    request_start = start_date or trade_date
-    request_end = end_date or trade_date
-    seed_start = _offset_date_text(request_start, -60) if request_start else ""
-    quote_items = _quote_mux().stocks.get_quotes(_stock_quotes_request(normalized, "1d", "", seed_start or request_start, request_end, "none"))
+    actual_trade_date = format_date_value(trade_date or end_date or start_date)
+    actual_start_date = format_date_value(start_date)
+    actual_end_date = format_date_value(end_date)
+    request_start = actual_start_date or format_date_value(trade_date)
+    request_end = actual_end_date or format_date_value(trade_date)
+    seed_days = -60 if quote_freq == "1d" else 0
+    seed_start = _offset_date_text(request_start, seed_days) if request_start and seed_days != 0 else request_start
+    quote_items = _local_stock_bar_1m_items(normalized, seed_start or request_start, request_end) if quote_freq == "1m" else []
+    if quote_items == []:
+        quote_items = _quote_mux().stocks.get_quotes(_stock_quotes_request(normalized, quote_freq, "", seed_start or request_start, request_end, "none"))
     if quote_items == []:
         return []
     frame = pd.DataFrame([item.model_dump() for item in quote_items])
-    frame["trade_date"] = frame["trade_time"].astype(str).str[:10]
+    frame["trade_key"] = frame["trade_time"].astype(str)
+    frame["trade_date"] = frame["trade_key"].str[:10]
     frame["close"] = pd.to_numeric(frame["close"], errors="coerce")
-    frame = frame.dropna(subset=["close"]).sort_values("trade_date").reset_index(drop=True)
+    frame = frame.dropna(subset=["close"]).sort_values("trade_key").reset_index(drop=True)
     if frame.empty:
         return []
     up_count = 0
@@ -249,14 +286,15 @@ def get_nine_turn(code: str, freq: str, trade_date: str, start_date: str, end_da
                 down_count = 0
                 setup_index = 0
                 signal = ""
-        trade_day = str(row["trade_date"])[:10]
+        trade_key = str(row["trade_key"])
+        trade_day = format_date_value(trade_key[:10])
         if actual_trade_date and trade_day != actual_trade_date:
             continue
-        if start_date and trade_day < start_date:
+        if actual_start_date and trade_day < actual_start_date:
             continue
-        if end_date and trade_day > end_date:
+        if actual_end_date and trade_day > actual_end_date:
             continue
-        rows.append(NineTurnItem(code=normalized, trade_time=trade_day, freq="daily", setup_index=int(setup_index), countdown_index=None, signal=signal))
+        rows.append(NineTurnItem(code=normalized, trade_time=trade_day if quote_freq == "1d" else trade_key, freq=actual_freq, setup_index=int(setup_index), countdown_index=None, signal=signal))
     return rows
 
 
@@ -473,35 +511,130 @@ def _sum_optional_column(frame: pd.DataFrame, column_name: str) -> float | None:
     return float(values.sum())
 
 
+def _amount_wan_to_yuan(value: object) -> object:
+    if value is None:
+        return None
+    return pd.to_numeric(value, errors="coerce") * 10000
+
+
+def _tushare_daily_stock_money_flow(date_value: str, member_codes: set[str]) -> pd.DataFrame:
+    from quotemux.infra.common import stock_code_to_ts
+    from quotemux.infra.provider_config import get_provider_api_key
+    from quotemux.infra.tushare.rate_limit import call_tushare_api
+
+    if member_codes == set():
+        return pd.DataFrame()
+    try:
+        import tushare as ts
+    except Exception:
+        return pd.DataFrame()
+    api_key = get_provider_api_key()
+    if api_key == "":
+        return pd.DataFrame()
+    pro = ts.pro_api(api_key)
+    request_date = date_value.replace("-", "")
+    try:
+        frame = call_tushare_api("moneyflow", pro.moneyflow, trade_date=request_date)
+    except Exception:
+        return pd.DataFrame()
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    work = frame.copy()
+    if "ts_code" not in work.columns or "trade_date" not in work.columns:
+        return pd.DataFrame()
+    member_ts_codes = {stock_code_to_ts(code) for code in member_codes if stock_code_to_ts(code) != ""}
+    work = work[work["ts_code"].astype(str).isin(member_ts_codes)]
+    if work.empty:
+        return pd.DataFrame()
+    for column_name in ("buy_lg_amount", "buy_elg_amount", "sell_lg_amount", "sell_elg_amount", "net_mf_amount"):
+        if column_name not in work.columns:
+            work[column_name] = 0
+    result = pd.DataFrame(
+        [
+            {
+                "trade_date": date_value,
+                "main_inflow": _amount_wan_to_yuan(pd.to_numeric(work["buy_lg_amount"], errors="coerce").fillna(0).sum() + pd.to_numeric(work["buy_elg_amount"], errors="coerce").fillna(0).sum()),
+                "main_outflow": _amount_wan_to_yuan(pd.to_numeric(work["sell_lg_amount"], errors="coerce").fillna(0).sum() + pd.to_numeric(work["sell_elg_amount"], errors="coerce").fillna(0).sum()),
+                "net_inflow": _amount_wan_to_yuan(pd.to_numeric(work["net_mf_amount"], errors="coerce").fillna(0).sum()),
+            }
+        ]
+    )
+    return result
+
+
+def _aggregate_board_money_flow(normalized: str, scope: str, date_value: str, codes: list[str]) -> BoardMoneyFlowItem | None:
+    fast_frame = _tushare_daily_stock_money_flow(date_value, set(codes))
+    if fast_frame.empty:
+        return None
+    inflow = _sum_optional_column(fast_frame, "main_inflow")
+    outflow = _sum_optional_column(fast_frame, "main_outflow")
+    net_inflow = _sum_optional_column(fast_frame, "net_inflow")
+    if inflow is None and outflow is None and net_inflow is None:
+        return None
+    return BoardMoneyFlowItem(board_code=normalized, trade_date=date_value, scope=scope, inflow=inflow, outflow=outflow, net_inflow=net_inflow)
+
+
 def get_board_money_flow(board_code: str, trade_date: str, start_date: str, end_date: str, scope: str) -> list[BoardMoneyFlowItem]:
-    del start_date
-    del end_date
+    from datetime import timedelta
+
+    from quotemux.infra.common import format_date_value, parse_date_text
+
     normalized = str(board_code).upper()
-    if normalized == "" or trade_date == "" or scope != "board":
+    if normalized == "" or scope != "board":
         return []
     quote_mux = _quote_mux()
-    member_items = quote_mux.boards.get_members(normalized, trade_date)
-    codes = [item.code for item in member_items if item.code != ""]
-    if codes == []:
-        return []
-    flow_items = quote_mux.stocks.get_money_flow_batch(",".join(codes), trade_date, "main")
-    if flow_items == []:
-        return []
-    frame = pd.DataFrame([item.model_dump() for item in flow_items])
-    if frame.empty:
-        return []
-    inflow = _sum_optional_column(frame, "main_inflow")
-    outflow = _sum_optional_column(frame, "main_outflow")
-    net_inflow = _sum_optional_column(frame, "net_inflow")
-    if inflow is None and outflow is None and net_inflow is None:
-        return []
-    return [
-        BoardMoneyFlowItem(
-            board_code=normalized,
-            trade_date=trade_date,
-            scope=scope,
-            inflow=inflow,
-            outflow=outflow,
-            net_inflow=net_inflow,
+    actual_trade_date = format_date_value(trade_date)
+    actual_start = format_date_value(start_date)
+    actual_end = format_date_value(end_date)
+    if actual_trade_date != "":
+        date_values = [actual_trade_date]
+    else:
+        if actual_start == "" and actual_end == "":
+            return []
+        if actual_start == "":
+            actual_start = actual_end
+        if actual_end == "":
+            actual_end = actual_start
+        start_day = parse_date_text(actual_start)
+        end_day = parse_date_text(actual_end)
+        if start_day is None or end_day is None or start_day > end_day:
+            return []
+        date_values = []
+        current_day = start_day
+        while current_day <= end_day:
+            date_values.append(current_day.strftime("%Y-%m-%d"))
+            current_day += timedelta(days=1)
+    rows: list[BoardMoneyFlowItem] = []
+    for date_value in date_values:
+        member_items = quote_mux.boards.get_members(normalized, date_value)
+        codes = [item.code for item in member_items if item.code != ""]
+        if codes == []:
+            continue
+        fast_item = _aggregate_board_money_flow(normalized, scope, date_value, codes)
+        if fast_item is not None:
+            rows.append(fast_item)
+            continue
+        flow_items = quote_mux.stocks.get_money_flow_batch(",".join(codes), date_value, "main")
+        if flow_items == []:
+            continue
+        frame = pd.DataFrame([item.model_dump() for item in flow_items])
+        if frame.empty:
+            continue
+        inflow = _sum_optional_column(frame, "main_inflow")
+        outflow = _sum_optional_column(frame, "main_outflow")
+        net_inflow = _sum_optional_column(frame, "net_inflow")
+        if inflow is None and outflow is None and net_inflow is None:
+            continue
+        rows.append(
+            BoardMoneyFlowItem(
+                board_code=normalized,
+                trade_date=date_value,
+                scope=scope,
+                inflow=inflow,
+                outflow=outflow,
+                net_inflow=net_inflow,
+            )
         )
-    ]
+    if rows == []:
+        return []
+    return sorted(rows, key=lambda item: item.trade_date)

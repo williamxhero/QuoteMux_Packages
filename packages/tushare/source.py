@@ -1123,6 +1123,37 @@ def _fetch_money_flow_frame(code: str, start_value: str, end_value: str, view: s
     return work[["code", "trade_date", "view", "main_inflow", "main_outflow", "net_inflow"]]
 
 
+def _money_flow_frame_from_raw(frame: pd.DataFrame, view: str) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    work = frame.copy()
+    code_column = "ts_code" if "ts_code" in work.columns else "code"
+    if code_column not in work.columns or "trade_date" not in work.columns:
+        return pd.DataFrame()
+    work["code"] = work[code_column].map(normalize_stock_code)
+    work["trade_date"] = work["trade_date"].map(format_date_value)
+    work["view"] = view
+    for column_name in ("buy_lg_amount", "buy_elg_amount", "sell_lg_amount", "sell_elg_amount", "net_mf_amount"):
+        if column_name not in work.columns:
+            work[column_name] = 0
+    work["main_inflow"] = _amount_wan_to_yuan(work["buy_lg_amount"].fillna(0) + work["buy_elg_amount"].fillna(0))
+    work["main_outflow"] = _amount_wan_to_yuan(work["sell_lg_amount"].fillna(0) + work["sell_elg_amount"].fillna(0))
+    work["net_inflow"] = _amount_wan_to_yuan(work["net_mf_amount"])
+    return work[["code", "trade_date", "view", "main_inflow", "main_outflow", "net_inflow"]]
+
+
+def _fetch_money_flow_daily_frame(trade_date: str, view: str) -> pd.DataFrame:
+    pro = get_ts_pro()
+    actual_trade_date = format_date_value(trade_date)
+    if pro is None or actual_trade_date == "":
+        return pd.DataFrame()
+    try:
+        frame = call_tushare_api("moneyflow", pro.moneyflow, trade_date=actual_trade_date.replace("-", ""))
+    except Exception:
+        return pd.DataFrame()
+    return _money_flow_frame_from_raw(frame, view)
+
+
 def _money_flow_items_from_frame(frame: pd.DataFrame) -> list[StockMoneyFlowItem]:
     items: list[StockMoneyFlowItem] = []
     for _, row in frame.sort_values(["code", "trade_date"]).iterrows():
@@ -1176,8 +1207,20 @@ def get_stock_money_flow_batch(codes: str, trade_date: str, view: str) -> list[S
     actual_trade_date = format_date_value(trade_date)
     if actual_codes == [] or actual_trade_date == "":
         return []
+    unique_codes = list(dict.fromkeys(actual_codes))
+    cache_path = build_cache_path("tushare", ["stocks", "indicators", "money-flow-daily"], {"trade_date": actual_trade_date, "view": view})
+    cache_df = read_cache_frame(cache_path)
+    if cache_df.empty:
+        fetched_df = _fetch_money_flow_daily_frame(actual_trade_date, view)
+        if not fetched_df.empty:
+            write_cache_frame(cache_path, fetched_df)
+            cache_df = fetched_df
+    if not cache_df.empty and {"code", "trade_date", "view"}.issubset(set(cache_df.columns)):
+        filtered_df = cache_df[(cache_df["code"].isin(unique_codes)) & (cache_df["trade_date"] == actual_trade_date) & (cache_df["view"] == view)]
+        if not filtered_df.empty:
+            return _money_flow_items_from_frame(filtered_df)
     items: list[StockMoneyFlowItem] = []
-    for code in dict.fromkeys(actual_codes):
+    for code in unique_codes:
         items.extend(get_stock_money_flow(code, actual_trade_date, "", "", view))
     return sorted(items, key=lambda item: (item.code, item.trade_date, item.view))
 
