@@ -37,7 +37,7 @@ def _fetch_stock_archive_frame(start_value: str, end_value: str) -> pd.DataFrame
     if df.empty or "trade_date" not in df.columns:
         return pd.DataFrame()
     work = df.copy()
-    work["trade_date"] = work["trade_date"].astype(str)
+    work["trade_date"] = work["trade_date"].map(format_date_value)
     work["code"] = work["ts_code"].astype(str).str.split(".").str[0]
     work["exchange"] = work["ts_code"].astype(str).str.split(".").str[1].map({"SH": "SSE", "SZ": "SZSE", "BJ": "BSE"}).fillna("")
     work["market"] = work["code"].map(
@@ -728,7 +728,7 @@ def _fetch_premarket_fallback_frame(code: str, start_value: str, end_value: str)
         rows.append(
             {
                 "code": normalize_stock_code(code),
-                "trade_date": day,
+                "trade_date": format_date_value(day),
                 "total_share": basic_row.get("total_share"),
                 "float_share": basic_row.get("float_share"),
                 "limit_up": limit_row.get("up_limit"),
@@ -736,6 +736,25 @@ def _fetch_premarket_fallback_frame(code: str, start_value: str, end_value: str)
             }
         )
     return pd.DataFrame(rows)
+
+
+def _fetch_premarket_market_limit_frame(start_value: str, end_value: str) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    for day in plan_days(start_value, end_value):
+        limit_df = query_frame("stk_limit", trade_date=day)
+        if limit_df.empty or "ts_code" not in limit_df.columns:
+            continue
+        work = limit_df.copy()
+        work["code"] = work["ts_code"].astype(str).str.split(".").str[0]
+        work["trade_date"] = format_date_value(day)
+        work["total_share"] = None
+        work["float_share"] = None
+        work["limit_up"] = work["up_limit"] if "up_limit" in work.columns else None
+        work["limit_down"] = work["down_limit"] if "down_limit" in work.columns else None
+        frames.append(work[["code", "trade_date", "total_share", "float_share", "limit_up", "limit_down"]])
+    if frames == []:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
 
 
 def get_premarket(code: str, trade_date: str, start_date: str, end_date: str) -> list[StockPremarketItem]:
@@ -746,7 +765,7 @@ def get_premarket(code: str, trade_date: str, start_date: str, end_date: str) ->
     if actual_code != "" and not filtered_df.empty and "code" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["code"] == actual_code]
     if actual_code == "" and (filtered_df.empty or "code" not in filtered_df.columns):
-        return []
+        filtered_df = _fetch_premarket_market_limit_frame(actual_start, actual_end)
     if filtered_df.empty or "code" not in filtered_df.columns:
         filtered_df = _fetch_premarket_fallback_frame(code, actual_start, actual_end)
     if filtered_df.empty or "trade_date" not in filtered_df.columns:
@@ -760,7 +779,7 @@ def get_premarket(code: str, trade_date: str, start_date: str, end_date: str) ->
             limit_up=float(row["limit_up"]) if pd.notna(row["limit_up"]) else None,
             limit_down=float(row["limit_down"]) if pd.notna(row["limit_down"]) else None,
         )
-        for _, row in filtered_df.sort_values("trade_date").iterrows()
+        for _, row in filtered_df.sort_values(["trade_date", "code"]).iterrows()
     ]
 
 

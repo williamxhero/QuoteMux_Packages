@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import json
 import re
+import time
 
 import requests
 
@@ -42,19 +44,57 @@ def _float_value(value: object) -> float | None:
         return None
 
 
+def _beijing_today() -> str:
+    return datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+
+
+def _build_limit_stock_candidates(trade_date: str, payload: dict[str, object]) -> list[LimitOrderAmountItem]:
+    candidates: list[LimitOrderAmountItem] = []
+    for key, limit_side in (("limit_up", "up"), ("limit_down", "down")):
+        rows = payload.get(key, [])
+        if not isinstance(rows, list):
+            raise RuntimeError(f"东方财富涨跌停列表字段不是数组: {key}")
+        for row in rows:
+            if not isinstance(row, dict):
+                raise RuntimeError(f"东方财富涨跌停列表返回了无效行: {key}")
+            code = str(row.get("code", "")).strip()
+            if not re.match(r"^\d{6}$", code):
+                raise RuntimeError(f"东方财富涨跌停列表返回了无效股票代码: {code}")
+            candidates.append(
+                LimitOrderAmountItem(
+                    code=code,
+                    trade_date=trade_date,
+                    limit_side=limit_side,
+                    market=_market_for_code(code),
+                    close=None,
+                    limit_price=None,
+                    captured_at="",
+                )
+            )
+    return sorted(candidates, key=lambda item: (item.limit_side, item.code))
+
+
 def _snapshot_payload(code: str, timeout_seconds: float) -> dict[str, object]:
-    response = requests.get(
-        SNAPSHOT_URL,
-        params={"id": code, "callback": "jQuery_limit_order_amount"},
-        headers=HEADERS,
-        timeout=timeout_seconds,
-    )
-    response.raise_for_status()
-    match = re.search(r"\{.*\}", response.text)
-    if match is None:
-        raise RuntimeError(f"解析股票 {code} 盘口快照失败，未找到 JSON 结构")
-    payload = json.loads(match.group(0))
-    return payload if isinstance(payload, dict) else {}
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = requests.get(
+                SNAPSHOT_URL,
+                params={"id": code, "callback": "jQuery_limit_order_amount"},
+                headers=HEADERS,
+                timeout=timeout_seconds,
+            )
+            response.raise_for_status()
+            match = re.search(r"\{.*\}", response.text)
+            if match is None:
+                raise RuntimeError(f"解析股票 {code} 盘口快照失败，未找到 JSON 结构")
+            payload = json.loads(match.group(0))
+            return payload if isinstance(payload, dict) else {}
+        except Exception as exc:
+            last_error = exc
+            if attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+    raise RuntimeError(f"请求股票 {code} 盘口快照失败: {last_error}")
 
 
 def _timeout_seconds() -> float:
@@ -110,3 +150,13 @@ def get_limit_order_amount(
         raise ValueError(f"无效涨跌停方向: {limit_side}")
     snapshot = _snapshot_payload(actual_code, _timeout_seconds())
     return [_build_item(actual_code, trade_date, limit_side, close, limit_price, snapshot)]
+
+
+def get_limit_stock_candidates(trade_date: str) -> list[LimitOrderAmountItem]:
+    from quotemux_packages.crawler_provider.limit_stock_list import crawl_limit_stock_list
+
+    actual_trade_date = str(trade_date)
+    if actual_trade_date != _beijing_today():
+        raise ValueError(f"涨跌停名单爬虫只支持当天: {actual_trade_date}")
+    payload = crawl_limit_stock_list()
+    return _build_limit_stock_candidates(actual_trade_date, payload)
