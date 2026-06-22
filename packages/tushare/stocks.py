@@ -740,10 +740,13 @@ def _fetch_premarket_fallback_frame(code: str, start_value: str, end_value: str)
 
 def get_premarket(code: str, trade_date: str, start_date: str, end_date: str) -> list[StockPremarketItem]:
     actual_start, actual_end = normalize_date_range(trade_date, start_date, end_date, 30)
+    actual_code = normalize_stock_code(code)
     source_df = _fetch_premarket_frame(actual_start, actual_end)
     filtered_df = filter_frame_by_date_range(source_df, "trade_date", actual_start, actual_end)
-    if not filtered_df.empty and "code" in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df["code"] == normalize_stock_code(code)]
+    if actual_code != "" and not filtered_df.empty and "code" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["code"] == actual_code]
+    if actual_code == "" and (filtered_df.empty or "code" not in filtered_df.columns):
+        return []
     if filtered_df.empty or "code" not in filtered_df.columns:
         filtered_df = _fetch_premarket_fallback_frame(code, actual_start, actual_end)
     if filtered_df.empty or "trade_date" not in filtered_df.columns:

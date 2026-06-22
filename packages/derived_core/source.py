@@ -517,6 +517,12 @@ def _amount_wan_to_yuan(value: object) -> object:
     return pd.to_numeric(value, errors="coerce") * 10000
 
 
+def _amount_yuan_to_yi(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return float(value) / 100000000.0
+
+
 def _tushare_daily_stock_money_flow(date_value: str, member_codes: set[str]) -> pd.DataFrame:
     from quotemux.infra.common import stock_code_to_ts
     from quotemux.infra.provider_config import get_provider_api_key
@@ -571,7 +577,7 @@ def _aggregate_board_money_flow(normalized: str, scope: str, date_value: str, co
     net_inflow = _sum_optional_column(fast_frame, "net_inflow")
     if inflow is None and outflow is None and net_inflow is None:
         return None
-    return BoardMoneyFlowItem(board_code=normalized, trade_date=date_value, scope=scope, inflow=inflow, outflow=outflow, net_inflow=net_inflow)
+    return BoardMoneyFlowItem(board_code=normalized, trade_date=date_value, scope=scope, inflow=_amount_yuan_to_yi(inflow), outflow=_amount_yuan_to_yi(outflow), net_inflow=_amount_yuan_to_yi(net_inflow))
 
 
 def get_board_money_flow(board_code: str, trade_date: str, start_date: str, end_date: str, scope: str) -> list[BoardMoneyFlowItem]:
@@ -630,9 +636,9 @@ def get_board_money_flow(board_code: str, trade_date: str, start_date: str, end_
                 board_code=normalized,
                 trade_date=date_value,
                 scope=scope,
-                inflow=inflow,
-                outflow=outflow,
-                net_inflow=net_inflow,
+                inflow=_amount_yuan_to_yi(inflow),
+                outflow=_amount_yuan_to_yi(outflow),
+                net_inflow=_amount_yuan_to_yi(net_inflow),
             )
         )
     if rows == []:

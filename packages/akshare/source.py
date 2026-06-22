@@ -796,14 +796,21 @@ def get_board_members(board_code: str, trade_date: str) -> list[BoardMemberItem]
     del trade_date
     normalized = str(board_code).upper()
     symbol, category = _board_symbol_and_category(normalized)
-    member_sources = (
-        (("stock_board_concept_cons_em", ak.stock_board_concept_cons_em),) if category == "concept" else
-        (("stock_board_industry_cons_em", ak.stock_board_industry_cons_em),) if category == "industry" else
-        (
+    if category == "concept":
+        member_sources = (
             ("stock_board_concept_cons_em", ak.stock_board_concept_cons_em),
             ("stock_board_industry_cons_em", ak.stock_board_industry_cons_em),
         )
-    )
+    elif category == "industry":
+        member_sources = (
+            ("stock_board_industry_cons_em", ak.stock_board_industry_cons_em),
+            ("stock_board_concept_cons_em", ak.stock_board_concept_cons_em),
+        )
+    else:
+        member_sources = (
+            ("stock_board_concept_cons_em", ak.stock_board_concept_cons_em),
+            ("stock_board_industry_cons_em", ak.stock_board_industry_cons_em),
+        )
     request_symbols = [normalized]
     if symbol != "" and symbol != normalized:
         request_symbols.append(symbol)

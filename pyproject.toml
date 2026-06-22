@@ -10,12 +10,13 @@ requires-python = ">=3.12"
 dependencies = []
 
 [tool.setuptools]
-packages = ["quotemux_packages", "quotemux_packages.akshare", "quotemux_packages.derived_core", "quotemux_packages.efinance", "quotemux_packages.mootdx", "quotemux_packages.opentdx", "quotemux_packages.tushare"]
+packages = ["quotemux_packages", "quotemux_packages.akshare", "quotemux_packages.crawler_provider", "quotemux_packages.derived_core", "quotemux_packages.efinance", "quotemux_packages.mootdx", "quotemux_packages.opentdx", "quotemux_packages.tushare"]
 package-dir = {"quotemux_packages" = "packages"}
 
 [tool.setuptools.package-data]
 quotemux_packages = ["py.typed"]
 "quotemux_packages.akshare" = ["quotemux_package.json", "requirements.txt"]
+"quotemux_packages.crawler_provider" = ["quotemux_package.json", "requirements.txt"]
 "quotemux_packages.derived_core" = ["quotemux_package.json", "requirements.txt"]
 "quotemux_packages.efinance" = ["quotemux_package.json", "requirements.txt"]
 "quotemux_packages.mootdx" = ["quotemux_package.json", "requirements.txt"]
