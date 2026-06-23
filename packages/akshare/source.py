@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import sys
 _saved_paths = [path for path in sys.path if "quotemux_packages" in path or ("packages" in path and "site-packages" not in path and "dist-packages" not in path)]
@@ -755,9 +755,25 @@ def _read_ths_member_frame(html: str) -> pd.DataFrame:
     except ValueError:
         return pd.DataFrame()
     for frame in frames:
-        if "代码" in frame.columns and "名称" in frame.columns:
-            return frame[["代码", "名称"]]
+        code_column = _first_existing_column(frame, ("代码", "浠ｇ爜"))
+        name_column = _first_existing_column(frame, ("名称", "鍚嶇О"))
+        if code_column != "" and name_column != "":
+            return frame[[code_column, name_column]]
     return pd.DataFrame()
+
+
+def _first_existing_column(frame: pd.DataFrame, names: tuple[str, ...]) -> str:
+    for name in names:
+        if name in frame.columns:
+            return name
+    return ""
+
+
+def _row_text_by_columns(row: pd.Series, names: tuple[str, ...]) -> str:
+    for name in names:
+        if name in row:
+            return _text_value(row.get(name))
+    return ""
 
 
 def _ths_page_count(html: str) -> int:
@@ -789,7 +805,11 @@ def _fetch_ths_board_members_frame(board_code: str, category: str) -> pd.DataFra
             frames.append(frame)
     if frames == []:
         return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True).drop_duplicates(subset=["代码"], keep="last")
+    work = pd.concat(frames, ignore_index=True)
+    code_column = _first_existing_column(work, ("代码", "浠ｇ爜"))
+    if code_column == "":
+        return pd.DataFrame()
+    return work.drop_duplicates(subset=[code_column], keep="last")
 
 
 def get_board_members(board_code: str, trade_date: str) -> list[BoardMemberItem]:
@@ -811,9 +831,9 @@ def get_board_members(board_code: str, trade_date: str) -> list[BoardMemberItem]
             ("stock_board_concept_cons_em", ak.stock_board_concept_cons_em),
             ("stock_board_industry_cons_em", ak.stock_board_industry_cons_em),
         )
-    request_symbols = [normalized]
-    if symbol != "" and symbol != normalized:
-        request_symbols.append(symbol)
+    request_symbols = [symbol] if symbol != "" else []
+    if normalized not in request_symbols:
+        request_symbols.append(normalized)
     result = pd.DataFrame()
     for api_name, func in member_sources:
         for request_symbol in request_symbols:
@@ -832,7 +852,7 @@ def get_board_members(board_code: str, trade_date: str) -> list[BoardMemberItem]
         return []
     items: list[BoardMemberItem] = []
     for _, row in result.iterrows():
-        code = normalize_stock_code(str(row.get("代码", "")))
+        code = normalize_stock_code(_row_text_by_columns(row, ("代码", "浠ｇ爜")))
         if code == "":
             continue
         code = code.zfill(6)
@@ -840,7 +860,7 @@ def get_board_members(board_code: str, trade_date: str) -> list[BoardMemberItem]
             BoardMemberItem(
                 board_code=normalized,
                 code=code,
-                name=str(row.get("名称", "")),
+                name=_row_text_by_columns(row, ("名称", "鍚嶇О")),
                 weight=None,
                 join_date="",
             )
@@ -1124,14 +1144,14 @@ def get_block_trades(trade_date: str, start_date: str, end_date: str, code: str,
     normalized_code = normalize_stock_code(code)
     items: list[BlockTradeItem] = []
     for _, row in result.iterrows():
-        row_code = normalize_stock_code(str(row.get("证券代码", "")))
+        row_code = normalize_stock_code(_row_text_by_columns(row, ("代码", "浠ｇ爜")))
         if normalized_code and row_code != normalized_code:
             continue
         items.append(
             BlockTradeItem(
                 trade_date=format_date_value(row.get("交易日期", "")),
                 code=row_code,
-                name=str(row.get("证券简称", "")),
+                name=_row_text_by_columns(row, ("名称", "鍚嶇О")),
                 price=_float_value(row.get("成交价")),
                 volume=_float_value(row.get("成交量")),
                 amount=_float_value(row.get("成交额")),
@@ -1150,14 +1170,14 @@ def get_dragon_tiger(trade_date: str, start_date: str, end_date: str, code: str,
     normalized_code = normalize_stock_code(code)
     items: list[DragonTigerItem] = []
     for _, row in result.iterrows():
-        row_code = normalize_stock_code(str(row.get("代码", "")))
+        row_code = normalize_stock_code(_row_text_by_columns(row, ("代码", "浠ｇ爜")))
         if normalized_code and row_code != normalized_code:
             continue
         items.append(
             DragonTigerItem(
                 trade_date=format_date_value(row.get("上榜日", "")),
                 code=row_code,
-                name=str(row.get("名称", "")),
+                name=_row_text_by_columns(row, ("名称", "鍚嶇О")),
                 reason=str(row.get("上榜原因", row.get("解读", ""))),
                 buy_amount=_float_value(row.get("龙虎榜买入额")),
                 sell_amount=_float_value(row.get("龙虎榜卖出额")),
@@ -1175,7 +1195,7 @@ def get_dragon_tiger_institutions(trade_date: str, start_date: str, end_date: st
     normalized_code = normalize_stock_code(code)
     items: list[DragonTigerInstitutionItem] = []
     for _, row in result.iterrows():
-        row_code = normalize_stock_code(str(row.get("代码", "")))
+        row_code = normalize_stock_code(_row_text_by_columns(row, ("代码", "浠ｇ爜")))
         if normalized_code and row_code != normalized_code:
             continue
         buy_count = pd.to_numeric(row.get("买方机构数"), errors="coerce")
@@ -1187,7 +1207,7 @@ def get_dragon_tiger_institutions(trade_date: str, start_date: str, end_date: st
             DragonTigerInstitutionItem(
                 trade_date=format_date_value(row.get("上榜日期", "")),
                 code=row_code,
-                name=str(row.get("名称", "")),
+                name=_row_text_by_columns(row, ("名称", "鍚嶇О")),
                 buy_amount=_float_value(row.get("机构买入总额")),
                 sell_amount=_float_value(row.get("机构卖出总额")),
                 net_amount=_float_value(row.get("机构买入净额")),
@@ -1267,7 +1287,7 @@ def get_hot_money_details(trade_date: str, start_date: str, end_date: str, name:
             department_name = str(row.get("营业部名称", ""))
             if name and name not in department_name:
                 continue
-            row_code = normalize_stock_code(str(row.get("股票代码", "")))
+            row_code = normalize_stock_code(_row_text_by_columns(row, ("代码", "浠ｇ爜")))
             key = (row_date, department_name, row_code)
             if key in seen:
                 continue
@@ -1277,7 +1297,7 @@ def get_hot_money_details(trade_date: str, start_date: str, end_date: str, name:
                     trade_date=row_date,
                     name=department_name,
                     code=row_code,
-                    stock_name=str(row.get("股票名称", "")),
+                    stock_name=_row_text_by_columns(row, ("名称", "鍚嶇О")),
                     buy_amount=_float_value(row.get("买入金额")),
                     sell_amount=_float_value(row.get("卖出金额")),
                     net_amount=_float_value(row.get("净额")),
@@ -1663,7 +1683,7 @@ def get_pledge_stats(code: str, trade_date: str, start_date: str, end_date: str)
         return []
     items: list[PledgeStatItem] = []
     for _, row in result.iterrows():
-        row_code = normalize_stock_code(str(row.get("股票代码", "")))
+        row_code = normalize_stock_code(_row_text_by_columns(row, ("代码", "浠ｇ爜")))
         row_date = format_date_value(row.get("交易日期", ""))
         if normalized_code and row_code != normalized_code:
             continue
@@ -1691,7 +1711,7 @@ def get_pledge_details(code: str, start_date: str, end_date: str, status: str) -
         return []
     items: list[PledgeDetailItem] = []
     for _, row in result.iterrows():
-        row_code = normalize_stock_code(str(row.get("股票代码", "")))
+        row_code = normalize_stock_code(_row_text_by_columns(row, ("代码", "浠ｇ爜")))
         row_start = format_date_value(row.get("质押开始日期", ""))
         if normalized_code and row_code != normalized_code:
             continue
@@ -1745,7 +1765,7 @@ def get_repurchases(code: str, start_date: str, end_date: str) -> list[Repurchas
         return []
     items: list[RepurchaseItem] = []
     for _, row in result.iterrows():
-        row_code = normalize_stock_code(str(row.get("股票代码", "")))
+        row_code = normalize_stock_code(_row_text_by_columns(row, ("代码", "浠ｇ爜")))
         if row_code != normalized_code:
             continue
         announce_date = format_date_value(row.get("最新公告日期", ""))
@@ -1846,7 +1866,7 @@ def get_disclosure_dates(code: str, report_period: str, start_period: str, end_p
         if result is None or result.empty:
             continue
         for _, row in result.iterrows():
-            row_code = normalize_stock_code(str(row.get("股票代码", "")))
+            row_code = normalize_stock_code(_row_text_by_columns(row, ("代码", "浠ｇ爜")))
             if normalized_code and row_code != normalized_code:
                 continue
             items.append(
@@ -1870,7 +1890,7 @@ def get_express(code: str, report_period: str, start_period: str, end_period: st
         if result is None or result.empty:
             continue
         for _, row in result.iterrows():
-            row_code = normalize_stock_code(str(row.get("股票代码", "")))
+            row_code = normalize_stock_code(_row_text_by_columns(row, ("代码", "浠ｇ爜")))
             if normalized_code and row_code != normalized_code:
                 continue
             items.append(
@@ -1898,7 +1918,7 @@ def get_forecasts(code: str, report_period: str, start_period: str, end_period: 
         if result is None or result.empty:
             continue
         for _, row in result.iterrows():
-            row_code = normalize_stock_code(str(row.get("股票代码", "")))
+            row_code = normalize_stock_code(_row_text_by_columns(row, ("代码", "浠ｇ爜")))
             if normalized_code and row_code != normalized_code:
                 continue
             forecast_value = _float_value(row.get("预测数值"))
@@ -2143,7 +2163,7 @@ def get_surveys(code: str, survey_date: str, start_date: str, end_date: str) -> 
         return []
     items: list[SurveyItem] = []
     for _, row in result.iterrows():
-        row_code = normalize_stock_code(str(row.get("代码", "")))
+        row_code = normalize_stock_code(_row_text_by_columns(row, ("代码", "浠ｇ爜")))
         row_date = format_date_value(row.get("调研日期", ""))
         if normalized_code and row_code != normalized_code:
             continue
@@ -2173,7 +2193,7 @@ def get_stock_daily_snapshot_full(trade_date: str) -> list[StockQuoteItem]:
         return []
     items: list[StockQuoteItem] = []
     for _, row in result.iterrows():
-        code = normalize_stock_code(str(row.get("代码", "")))
+        code = normalize_stock_code(_row_text_by_columns(row, ("代码", "浠ｇ爜")))
         if code == "":
             continue
         pre_close = _float_value(row.get("昨收", row.get("昨日收盘")))
@@ -2202,4 +2222,5 @@ def get_stock_daily_snapshot_full(trade_date: str) -> list[StockQuoteItem]:
             )
         )
     return sorted(items, key=lambda item: item.code)
+
 

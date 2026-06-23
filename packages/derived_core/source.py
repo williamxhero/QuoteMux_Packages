@@ -332,22 +332,23 @@ def get_yearly_trading_calendar(exchange: str, start_year: int, end_year: int) -
 def get_board_members(board_code: str, trade_date: str) -> list[BoardMemberItem]:
     del trade_date
     normalized = str(board_code).upper()
-    industry = BOARD_STOCK_INDUSTRY_MAP.get(normalized, "")
-    if industry == "":
-        return []
     from quotemux.infra.db.client import query_dataframe
 
     frame = query_dataframe(
         """
         select
-            code,
-            name
-        from ref.stock
-        where board_type = %s
-          and (delisted_date is null or delisted_date >= current_date)
-        order by code
+            stock.code,
+            stock.name
+        from ref.board board
+        join ref.stock stock
+          on stock.board_type = board.name
+        where board.board_code = %s
+          and board.board_type = 'industry'
+          and board.status = 'active'
+          and (stock.delisted_date is null or stock.delisted_date >= current_date)
+        order by stock.code
         """,
-        (industry,),
+        (normalized,),
     )
     if frame.empty:
         return []
@@ -384,7 +385,7 @@ def _board_quote_frame(board_codes: list[str], start_date: str, end_date: str) -
         return pd.DataFrame()
     return query_dataframe(
         """
-        with member_rows as (
+        with target_member_rows as (
             select
                 membership.board_code,
                 membership.stock_code as code,
@@ -393,6 +394,39 @@ def _board_quote_frame(board_codes: list[str], start_date: str, end_date: str) -
                 membership.valid_to
             from ref.board_stock_membership membership
             where membership.board_code = any(%s)
+              and membership.valid_from <= %s::date
+              and (membership.valid_to is null or membership.valid_to >= %s::date)
+        ),
+        fallback_member_dates as (
+            select
+                membership.board_code,
+                max(membership.valid_from) as valid_from
+            from ref.board_stock_membership membership
+            where membership.board_code = any(%s)
+              and membership.valid_from <= %s::date
+            group by membership.board_code
+        ),
+        fallback_member_rows as (
+            select
+                membership.board_code,
+                membership.stock_code as code,
+                membership.weight,
+                membership.valid_from,
+                membership.valid_to
+            from ref.board_stock_membership membership
+            join fallback_member_dates latest
+              on latest.board_code = membership.board_code
+             and latest.valid_from = membership.valid_from
+            where not exists (
+                select 1
+                from target_member_rows target
+                where target.board_code = membership.board_code
+            )
+        ),
+        member_rows as (
+            select * from target_member_rows
+            union all
+            select * from fallback_member_rows
         ),
         daily_rows as (
             select
@@ -406,8 +440,6 @@ def _board_quote_frame(board_codes: list[str], start_date: str, end_date: str) -
             from member_rows
             join fact.stock_daily_1d stock_rows on stock_rows.code = member_rows.code
             where stock_rows.trade_date between %s and %s
-              and member_rows.valid_from <= stock_rows.trade_date
-              and (member_rows.valid_to is null or member_rows.valid_to >= stock_rows.trade_date)
               and stock_rows.is_suspended = false
               and stock_rows.is_st = false
               and stock_rows.close is not null
@@ -447,7 +479,7 @@ def _board_quote_frame(board_codes: list[str], start_date: str, end_date: str) -
         where aggregate_rows.stock_count > 0
         order by aggregate_rows.board_code, aggregate_rows.trade_date
         """,
-        (board_codes, start_date, end_date),
+        (board_codes, end_date, end_date, board_codes, end_date, start_date, end_date),
     )
 
 

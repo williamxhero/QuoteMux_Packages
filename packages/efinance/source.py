@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime, timedelta
 
@@ -73,6 +73,13 @@ def _text_value(value: object) -> str:
     if value is None or pd.isna(value):
         return ""
     return str(value)
+
+
+def _first_existing_column(frame: pd.DataFrame, names: tuple[str, ...]) -> str:
+    for name in names:
+        if name in frame.columns:
+            return name
+    return ""
 
 
 def _quote_bool_flag(row: pd.Series | dict[str, object], *names: str) -> bool:
@@ -220,18 +227,23 @@ def _fetch_index_history_frame(index_code: str, freq: str, start_dt: datetime, e
 
 
 def _fetch_board_history_frame(board_code: str, start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
-    result = _call_ef("stock.get_history_bill", ef.stock.get_history_bill, board_code)
+    try:
+        result = _call_ef("stock.get_history_bill", ef.stock.get_history_bill, board_code)
+    except Exception:
+        return pd.DataFrame()
     if result is None or result.empty:
         return pd.DataFrame()
     work = result.copy()
-    for column in ["日期", "收盘价", "涨跌幅"]:
-        if column not in work.columns:
-            return pd.DataFrame()
+    date_column = _first_existing_column(work, ("日期", "鏃ユ湡"))
+    close_column = _first_existing_column(work, ("收盘价", "收盘", "鏀剁洏浠?"))
+    pct_column = _first_existing_column(work, ("涨跌幅", "娑ㄨ穼骞?"))
+    if date_column == "" or close_column == "" or pct_column == "":
+        return pd.DataFrame()
     work["board_code"] = str(board_code).upper()
-    work["trade_time"] = pd.to_datetime(work["日期"], errors="coerce")
+    work["trade_time"] = pd.to_datetime(work[date_column], errors="coerce")
     work["freq"] = "1d"
-    work["close"] = pd.to_numeric(work["收盘价"], errors="coerce")
-    work["pct_chg"] = pd.to_numeric(work["涨跌幅"], errors="coerce")
+    work["close"] = pd.to_numeric(work[close_column], errors="coerce")
+    work["pct_chg"] = pd.to_numeric(work[pct_column], errors="coerce")
     valid_pct = work["pct_chg"].notna() & (work["pct_chg"] != -100)
     work["pre_close"] = pd.NA
     work.loc[valid_pct, "pre_close"] = work.loc[valid_pct, "close"] / (1 + work.loc[valid_pct, "pct_chg"] / 100)
@@ -580,4 +592,5 @@ def get_stock_finance_indicators(code: str, codes: str, report_period: str, star
                 )
             )
     return sorted(items, key=lambda item: (item.code, item.report_period))
+
 

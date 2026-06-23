@@ -1,10 +1,5 @@
 # QuoteMux_Packages
 
-`QuoteMux` 的远程 source packages 仓库。
-
-仓库地址：
-- [williamxhero/QuoteMux_Packages](https://github.com/williamxhero/QuoteMux_Packages)
-
 ## 这是什么
 
 这个仓库只负责维护全部 source packages 的源码与 manifest。
@@ -18,7 +13,8 @@
 - `mootdx`
 - `opentdx`
 - `akshare`
-- `derived_core`
+- `derived_core` 由以上源推导出来的数据
+- `crawler_provider` 爬虫数据
 
 ## 这不是主体安装入口
 
@@ -39,16 +35,6 @@
 - GUI 路径：在 `MarketHub` 的 `/admin` 中点击 `安装或更新全部 Packages`
 
 这两条路径最终都会整体安装或更新本仓库。
-
-## 仓库结构
-
-每个 package 目录内都包含：
-
-- `quotemux_package.json`
-- `requirements.txt`
-- Python 源码
-
-安装后由 `QuoteMux` 自动读取 manifest 并注册能力。
 
 ## 与其他仓库的关系
 

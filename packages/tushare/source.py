@@ -412,7 +412,7 @@ def get_board_categories(parent_code: str, level: int | None) -> list[BoardCateg
     return items
 
 
-def _fetch_board_members_frame(board_code: str) -> pd.DataFrame:
+def _fetch_board_members_frame(board_code: str, output_board_code: str = "") -> pd.DataFrame:
     pro = get_ts_pro()
     ts_code = _board_code_to_ts(board_code)
     if pro is None or ts_code == "":
@@ -427,18 +427,18 @@ def _fetch_board_members_frame(board_code: str) -> pd.DataFrame:
     for column in ["ts_code", "con_code", "con_name", "weight", "in_date", "out_date"]:
         if column not in work.columns:
             work[column] = ""
-    work["board_code"] = ts_code.split(".", 1)[0]
+    work["board_code"] = output_board_code or ts_code.split(".", 1)[0]
     work["code"] = work["con_code"].map(normalize_stock_code)
     work["name"] = work["con_name"].fillna("").astype(str)
     return work[["board_code", "code", "name", "weight", "in_date", "out_date"]]
 
 
 def _load_board_members_frame(board_code: str) -> pd.DataFrame:
-    normalized = _board_code_to_ts(board_code).split(".", 1)[0]
+    normalized, provider_code = _resolve_board_code_pair(board_code)
     cache_path = build_cache_path("tushare", ["boards", "members"], {"board_code": normalized})
     cache_df = read_cache_frame(cache_path)
     if cache_df.empty:
-        fetched_df = _fetch_board_members_frame(normalized)
+        fetched_df = _fetch_board_members_frame(provider_code, normalized)
         if not fetched_df.empty:
             write_cache_frame(cache_path, fetched_df)
             cache_df = fetched_df
