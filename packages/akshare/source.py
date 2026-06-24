@@ -604,19 +604,24 @@ def _normalize_board_catalog_frame(fetched_df: pd.DataFrame, category: str) -> p
     work["board_name"] = work[name_column].fillna("").astype(str)
     work["category"] = category
     work["status"] = "active"
+    work["start_date"] = ""
+    work["end_date"] = ""
     work = work[(work["board_code"] != "") & (work["board_name"] != "")]
-    return work[["board_code", "board_name", "category", "status"]]
+    return work[["board_code", "board_name", "category", "status", "start_date", "end_date"]]
 
 
 def _fetch_board_catalog_frame(category: str) -> pd.DataFrame:
+    frames = []
     for api_name, fetcher in _board_catalog_fetchers(category):
         try:
             frame = _normalize_board_catalog_frame(_call_ak(api_name, fetcher), category)
         except Exception:
             continue
         if not frame.empty:
-            return frame
-    return pd.DataFrame()
+            frames.append(frame)
+    if frames == []:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True).drop_duplicates(subset=["board_code"], keep="last")
 
 
 def _load_board_catalog_frame(category: str) -> pd.DataFrame:
@@ -627,8 +632,8 @@ def _load_board_catalog_frame(category: str) -> pd.DataFrame:
     if cache_df.empty:
         fetched_df = _fetch_board_catalog_frame(category)
         if not fetched_df.empty:
-            write_cache_frame(cache_path, fetched_df)
             cache_df = fetched_df
+            write_cache_frame(cache_path, cache_df)
     return cache_df
     if cache_df.empty:
         if category == "concept":
@@ -698,6 +703,8 @@ def get_board_catalog(category: str, market: str, status: str, limit: int, offse
             category=str(row["category"]),
             market="a_share",
             status=str(row["status"]),
+            start_date=str(row.get("start_date", "")),
+            end_date=str(row.get("end_date", "")),
         )
         for _, row in work.iterrows()
     ]

@@ -354,13 +354,15 @@ def _fetch_board_catalog_frame(index_type: str) -> pd.DataFrame:
     work["board_code"] = work["ts_code"].fillna("").astype(str).str.split(".").str[0]
     work["category"] = work["board_code"].map(_board_category_from_code)
     work["status"] = "active"
-    return work[["board_code", "name", "category", "status"]]
+    work["start_date"] = work["list_date"].fillna("").astype(str)
+    work["end_date"] = ""
+    return work[["board_code", "name", "category", "status", "start_date", "end_date"]]
 
 
 def _load_board_catalog_frame(index_type: str) -> pd.DataFrame:
     cache_path = build_cache_path("tushare", ["boards", "catalog"], {"type": index_type})
     cache_df = read_cache_frame(cache_path)
-    if cache_df.empty:
+    if cache_df.empty or "start_date" not in cache_df.columns:
         fetched_df = _fetch_board_catalog_frame(index_type)
         if not fetched_df.empty:
             write_cache_frame(cache_path, fetched_df)
@@ -388,6 +390,8 @@ def get_board_catalog(category: str, market: str, status: str, limit: int, offse
             category=str(row["category"]),
             market="a_share",
             status=str(row["status"]),
+            start_date=str(row.get("start_date", "")),
+            end_date=str(row.get("end_date", "")),
         )
         for _, row in work.iterrows()
     ]
