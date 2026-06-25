@@ -55,23 +55,23 @@
       "notes": "基于交易日历派生年度范围日历。"
     },
     {
-      "capability_id": "boards.members",
+      "capability_id": "concepts.members",
       "support_level": "derived",
-      "handler_name": "get_board_members",
+      "handler_name": "get_concept_members",
       "mergeable": true,
       "notes": "基于本地股票行业分类派生板块成分。"
     },
     {
-      "capability_id": "boards.quotes.daily",
+      "capability_id": "concepts.quotes.daily",
       "support_level": "derived",
-      "handler_name": "get_board_quotes",
+      "handler_name": "get_concept_quotes",
       "mergeable": true,
       "notes": "基于本地板块成分和个股日线按成交额加权派生板块强弱指标。"
     },
     {
-      "capability_id": "boards.indicators.money_flow",
+      "capability_id": "concepts.indicators.money_flow",
       "support_level": "derived",
-      "handler_name": "get_board_money_flow",
+      "handler_name": "get_concept_money_flow",
       "mergeable": true,
       "notes": "基于本地板块成分和个股资金流派生 BK 板块资金流。"
     }
@@ -87,9 +87,9 @@
   "handler_targets": {
     "get_hl_signal": "quotemux_packages.derived_core.source:get_hl_signal",
     "get_nine_turn": "quotemux_packages.derived_core.source:get_nine_turn",
-    "get_board_money_flow": "quotemux_packages.derived_core.source:get_board_money_flow",
-    "get_board_members": "quotemux_packages.derived_core.source:get_board_members",
-    "get_board_quotes": "quotemux_packages.derived_core.source:get_board_quotes",
+    "get_concept_money_flow": "quotemux_packages.derived_core.source:get_concept_money_flow",
+    "get_concept_members": "quotemux_packages.derived_core.source:get_concept_members",
+    "get_concept_quotes": "quotemux_packages.derived_core.source:get_concept_quotes",
     "get_next_trading_days": "quotemux_packages.derived_core.source:get_next_trading_days",
     "get_previous_trading_days": "quotemux_packages.derived_core.source:get_previous_trading_days",
     "get_shareholder_changes": "quotemux_packages.derived_core.source:get_shareholder_changes",

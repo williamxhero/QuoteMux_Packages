@@ -6,51 +6,51 @@
   "description": "AKShare 数据源。",
   "capabilities": [
     {
-      "capability_id": "boards.catalog",
+      "capability_id": "concepts.catalog",
       "support_level": "native",
-      "handler_name": "get_board_catalog",
+      "handler_name": "get_concept_catalog",
       "mergeable": true,
       "notes": "东方财富概念板块与行业板块目录"
     },
     {
-      "capability_id": "boards.indicators.money_flow",
+      "capability_id": "concepts.indicators.money_flow",
       "support_level": "partial",
-      "handler_name": "get_board_money_flow",
+      "handler_name": "get_concept_money_flow",
       "mergeable": true,
       "notes": "当前稳定覆盖行业板块历史主力净流入，概念板块历史资金流暂不覆盖"
     },
     {
-      "capability_id": "boards.indicators.money_flow.snapshot",
+      "capability_id": "concepts.indicators.money_flow.snapshot",
       "support_level": "native",
-      "handler_name": "get_board_daily_money_flow_snapshot",
+      "handler_name": "get_concept_daily_money_flow_snapshot",
       "mergeable": true,
       "notes": "同花顺概念/行业板块即时资金流快照"
     },
     {
-      "capability_id": "boards.members",
+      "capability_id": "concepts.members",
       "support_level": "native",
-      "handler_name": "get_board_members",
+      "handler_name": "get_concept_members",
       "mergeable": true,
       "notes": "东方财富概念/行业板块当前成分"
     },
     {
-      "capability_id": "boards.profile",
+      "capability_id": "concepts.profile",
       "support_level": "derived",
-      "handler_name": "get_board_profile",
+      "handler_name": "get_concept_profile",
       "mergeable": true,
       "notes": "基于板块目录派生单板块 profile"
     },
     {
-      "capability_id": "boards.quotes.daily",
+      "capability_id": "concepts.quotes.daily",
       "support_level": "native",
-      "handler_name": "get_board_quotes",
+      "handler_name": "get_concept_quotes",
       "mergeable": true,
       "notes": "东方财富概念/行业板块日线、周线、月线"
     },
     {
-      "capability_id": "boards.reference.categories",
+      "capability_id": "concepts.reference.categories",
       "support_level": "derived",
-      "handler_name": "get_board_categories",
+      "handler_name": "get_concept_categories",
       "mergeable": true,
       "notes": "基于概念/行业板块目录派生固定分类"
     },
@@ -331,13 +331,13 @@
   "secret_fields": [],
   "supports_multi_instance": true,
   "handler_targets": {
-    "get_board_catalog": "quotemux_packages.akshare.source:get_board_catalog",
-    "get_board_categories": "quotemux_packages.akshare.source:get_board_categories",
-    "get_board_daily_money_flow_snapshot": "quotemux_packages.akshare.source:get_board_daily_money_flow_snapshot",
-    "get_board_members": "quotemux_packages.akshare.source:get_board_members",
-    "get_board_money_flow": "quotemux_packages.akshare.source:get_board_money_flow",
-    "get_board_profile": "quotemux_packages.akshare.source:get_board_profile",
-    "get_board_quotes": "quotemux_packages.akshare.source:get_board_quotes",
+    "get_concept_catalog": "quotemux_packages.akshare.source:get_concept_catalog",
+    "get_concept_categories": "quotemux_packages.akshare.source:get_concept_categories",
+    "get_concept_daily_money_flow_snapshot": "quotemux_packages.akshare.source:get_concept_daily_money_flow_snapshot",
+    "get_concept_members": "quotemux_packages.akshare.source:get_concept_members",
+    "get_concept_money_flow": "quotemux_packages.akshare.source:get_concept_money_flow",
+    "get_concept_profile": "quotemux_packages.akshare.source:get_concept_profile",
+    "get_concept_quotes": "quotemux_packages.akshare.source:get_concept_quotes",
     "get_auctions": "quotemux_packages.akshare.source:get_auctions",
     "get_block_trades": "quotemux_packages.akshare.source:get_block_trades",
     "get_company_profile": "quotemux_packages.akshare.source:get_company_profile",

@@ -6,58 +6,58 @@
   "description": "Tushare 数据源。",
   "capabilities": [
     {
-      "capability_id": "boards.catalog",
+      "capability_id": "concepts.catalog",
       "support_level": "native",
-      "handler_name": "get_board_catalog",
+      "handler_name": "get_concept_catalog",
       "mergeable": true,
       "notes": ""
     },
     {
-      "capability_id": "boards.indicators.money_flow",
+      "capability_id": "concepts.indicators.money_flow",
       "support_level": "native",
-      "handler_name": "get_board_money_flow",
+      "handler_name": "get_concept_money_flow",
       "mergeable": true,
       "notes": ""
     },
     {
-      "capability_id": "boards.indicators.money_flow.snapshot",
+      "capability_id": "concepts.indicators.money_flow.snapshot",
       "support_level": "native",
-      "handler_name": "get_board_daily_money_flow_snapshot",
+      "handler_name": "get_concept_daily_money_flow_snapshot",
       "mergeable": true,
       "notes": ""
     },
     {
-      "capability_id": "boards.members",
+      "capability_id": "concepts.members",
       "support_level": "native",
-      "handler_name": "get_board_members",
+      "handler_name": "get_concept_members",
       "mergeable": true,
       "notes": ""
     },
     {
-      "capability_id": "boards.members.history",
+      "capability_id": "concepts.members.history",
       "support_level": "native",
-      "handler_name": "get_board_member_history",
+      "handler_name": "get_concept_member_history",
       "mergeable": true,
       "notes": ""
     },
     {
-      "capability_id": "boards.profile",
+      "capability_id": "concepts.profile",
       "support_level": "native",
-      "handler_name": "get_board_profile",
+      "handler_name": "get_concept_profile",
       "mergeable": true,
       "notes": ""
     },
     {
-      "capability_id": "boards.quotes.daily",
+      "capability_id": "concepts.quotes.daily",
       "support_level": "native",
-      "handler_name": "get_board_quotes",
+      "handler_name": "get_concept_quotes",
       "mergeable": true,
       "notes": ""
     },
     {
-      "capability_id": "boards.reference.categories",
+      "capability_id": "concepts.reference.categories",
       "support_level": "static",
-      "handler_name": "get_board_categories",
+      "handler_name": "get_concept_categories",
       "mergeable": true,
       "notes": "本地固定板块分类"
     },
@@ -542,14 +542,14 @@
     "get_auctions": "quotemux_packages.tushare.source:get_auctions",
     "get_audits": "quotemux_packages.tushare.source:get_audits",
     "get_block_trades": "quotemux_packages.tushare.source:get_block_trades",
-    "get_board_catalog": "quotemux_packages.tushare.source:get_board_catalog",
-    "get_board_categories": "quotemux_packages.tushare.source:get_board_categories",
-    "get_board_daily_money_flow_snapshot": "quotemux_packages.tushare.source:get_board_daily_money_flow_snapshot",
-    "get_board_member_history": "quotemux_packages.tushare.source:get_board_member_history",
-    "get_board_members": "quotemux_packages.tushare.source:get_board_members",
-    "get_board_money_flow": "quotemux_packages.tushare.source:get_board_money_flow",
-    "get_board_profile": "quotemux_packages.tushare.source:get_board_profile",
-    "get_board_quotes": "quotemux_packages.tushare.source:get_board_quotes",
+    "get_concept_catalog": "quotemux_packages.tushare.source:get_concept_catalog",
+    "get_concept_categories": "quotemux_packages.tushare.source:get_concept_categories",
+    "get_concept_daily_money_flow_snapshot": "quotemux_packages.tushare.source:get_concept_daily_money_flow_snapshot",
+    "get_concept_member_history": "quotemux_packages.tushare.source:get_concept_member_history",
+    "get_concept_members": "quotemux_packages.tushare.source:get_concept_members",
+    "get_concept_money_flow": "quotemux_packages.tushare.source:get_concept_money_flow",
+    "get_concept_profile": "quotemux_packages.tushare.source:get_concept_profile",
+    "get_concept_quotes": "quotemux_packages.tushare.source:get_concept_quotes",
     "get_bse_code_mappings": "quotemux_packages.tushare.source:get_bse_code_mappings",
     "get_ccass_holding_details": "quotemux_packages.tushare.source:get_ccass_holding_details",
     "get_ccass_holdings": "quotemux_packages.tushare.source:get_ccass_holdings",

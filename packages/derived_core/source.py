@@ -644,7 +644,7 @@ def get_board_money_flow(board_code: str, trade_date: str, start_date: str, end_
             current_day += timedelta(days=1)
     rows: list[BoardMoneyFlowItem] = []
     for date_value in date_values:
-        member_items = quote_mux.boards.get_members(normalized, date_value)
+        member_items = quote_mux.concepts.get_members(normalized, date_value)
         codes = [item.code for item in member_items if item.code != ""]
         if codes == []:
             continue
@@ -676,3 +676,13 @@ def get_board_money_flow(board_code: str, trade_date: str, start_date: str, end_
     if rows == []:
         return []
     return sorted(rows, key=lambda item: item.trade_date)
+
+def get_concept_members(concept_id: str, trade_date: str):
+    return get_board_members(concept_id, trade_date)
+
+def get_concept_quotes(concept_ids: list[str], freq: str, trade_date: str, start_date: str, end_date: str, start_time: str, end_time: str, count: int | None):
+    return get_board_quotes(concept_ids, freq, trade_date, start_date, end_date, start_time, end_time, count)
+
+def get_concept_money_flow(concept_id: str, trade_date: str, start_date: str, end_date: str, scope: str):
+    return get_board_money_flow(concept_id, trade_date, start_date, end_date, scope)
+

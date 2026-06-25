@@ -593,4 +593,6 @@ def get_stock_finance_indicators(code: str, codes: str, report_period: str, star
             )
     return sorted(items, key=lambda item: (item.code, item.report_period))
 
+def get_concept_quotes(concept_ids: list[str], freq: str, trade_date: str, start_date: str, end_date: str, start_time: str, end_time: str, count: int | None):
+    return get_board_quotes(concept_ids, freq, trade_date, start_date, end_date, start_time, end_time, count)
 

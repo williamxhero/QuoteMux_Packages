@@ -1553,4 +1553,27 @@ def get_stock_financial_statements(
             )
     return items
 
+def get_concept_catalog(category: str, market: str, status: str, limit: int, offset: int):
+    return get_board_catalog(category, market, status, limit, offset)
+
+def get_concept_profile(concept_id: str):
+    return get_board_profile(concept_id)
+
+def get_concept_categories(parent_code: str, level: int | None):
+    return get_board_categories(parent_code, level)
+
+def get_concept_members(concept_id: str, trade_date: str):
+    return get_board_members(concept_id, trade_date)
+
+def get_concept_member_history(concept_id: str, start_date: str, end_date: str):
+    return get_board_member_history(concept_id, start_date, end_date)
+
+def get_concept_quotes(concept_ids: list[str], freq: str, trade_date: str, start_date: str, end_date: str, start_time: str, end_time: str, count: int | None):
+    return get_board_quotes(concept_ids, freq, trade_date, start_date, end_date, start_time, end_time, count)
+
+def get_concept_money_flow(concept_id: str, trade_date: str, start_date: str, end_date: str, scope: str):
+    return get_board_money_flow(concept_id, trade_date, start_date, end_date, scope)
+
+def get_concept_daily_money_flow_snapshot(trade_date: str, scope: str, limit: int, offset: int):
+    return get_board_daily_money_flow_snapshot(trade_date, scope, limit, offset)
 
