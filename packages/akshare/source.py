@@ -43,7 +43,7 @@ from quotemux.infra.cache.store import build_cache_path, filter_frame_by_date_ra
 from quotemux.infra.common import add_quote_metrics, aggregate_ohlc, build_time_bounds, format_date_value, format_datetime_value, normalize_index_code, normalize_stock_code, split_csv
 from quotemux.runtime_core.quality import build_akshare_index_symbol, calibrate_quote_units
 from quotemux.infra.provider_runtime.core import call_provider_api
-from platform_models import AuctionItem, BlockTradeItem, BoardCatalogItem, BoardCategoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, ConnectCapitalFlowItem, DisclosureDateItem, DividendItem, DragonTigerInstitutionItem, DragonTigerItem, ExpressItem, ForecastItem, HKConnectHoldingItem, HotMoneyDetailItem, IndexMemberItem, IndexQuoteItem, MainBusinessItem, MarketCapitalFlowItem, NewsEventItem, PledgeDetailItem, PledgeStatItem, RankingResearchReportItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockFinanceIndicatorItem, StockFinancialStatementItem, StockMoneyFlowItem, StockProfileItem, StockQuoteItem, SurveyItem, TradingCalendarItem, UnlockScheduleItem
+from platform_models import AuctionItem, BlockTradeItem, BoardCatalogItem, BoardCategoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, ConnectCapitalFlowItem, DisclosureDateItem, DividendItem, DragonTigerInstitutionItem, DragonTigerItem, ExpressItem, ForecastItem, HKConnectHoldingItem, HotMoneyDetailItem, IndexMemberItem, IndexQuoteItem, LimitOrderAmountItem, MainBusinessItem, MarketCapitalFlowItem, NewsEventItem, PledgeDetailItem, PledgeStatItem, RankingResearchReportItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockFinanceIndicatorItem, StockFinancialStatementItem, StockMoneyFlowItem, StockProfileItem, StockQuoteItem, SurveyItem, TradingCalendarItem, UnlockScheduleItem
 
 
 DEFAULT_LOOKBACK_DAYS = 30
@@ -2229,6 +2229,44 @@ def get_stock_daily_snapshot_full(trade_date: str) -> list[StockQuoteItem]:
             )
         )
     return sorted(items, key=lambda item: item.code)
+
+
+def _limit_order_amount_items_from_frame(frame: pd.DataFrame, trade_date: str, limit_side: str, amount_column: str) -> list[LimitOrderAmountItem]:
+    if frame is None or frame.empty:
+        return []
+    items: list[LimitOrderAmountItem] = []
+    for _, row in frame.iterrows():
+        code = normalize_stock_code(_row_text_by_columns(row, ("代码", "证券代码")))
+        if code == "":
+            continue
+        price = _float_value(row.get("最新价"))
+        items.append(
+            LimitOrderAmountItem(
+                code=code,
+                trade_date=trade_date,
+                limit_side=limit_side,
+                market=_stock_market(code),
+                close=price,
+                limit_price=price,
+                order_price=price,
+                order_volume=None,
+                order_amount=_float_value(row.get(amount_column)),
+                captured_at=f"{trade_date} 15:00:00",
+            )
+        )
+    return items
+
+
+def get_limit_order_amount(trade_date: str) -> list[LimitOrderAmountItem]:
+    actual_trade_date = format_date_value(trade_date)
+    if actual_trade_date == "":
+        return []
+    date_arg = actual_trade_date.replace("-", "")
+    up_frame = _call_ak("stock_zt_pool_em", ak.stock_zt_pool_em, date=date_arg)
+    down_frame = _call_ak("stock_zt_pool_dtgc_em", ak.stock_zt_pool_dtgc_em, date=date_arg)
+    items = _limit_order_amount_items_from_frame(up_frame, actual_trade_date, "up", "封板资金")
+    items.extend(_limit_order_amount_items_from_frame(down_frame, actual_trade_date, "down", "封单资金"))
+    return sorted(items, key=lambda item: (item.limit_side, item.code))
 
 def get_concept_catalog(category: str, market: str, status: str, limit: int, offset: int):
     return get_board_catalog(category, market, status, limit, offset)

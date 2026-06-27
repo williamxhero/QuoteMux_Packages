@@ -300,6 +300,13 @@
       "notes": "使用实时全市场快照，仅覆盖当前日期"
     },
     {
+      "capability_id": "stocks.signals.limit_order_amount",
+      "support_level": "native",
+      "handler_name": "get_limit_order_amount",
+      "mergeable": true,
+      "notes": "东方财富涨停池和跌停池历史封单资金"
+    },
+    {
       "capability_id": "stocks.quotes.intraday",
       "support_level": "native",
       "handler_name": "get_stock_quotes",
@@ -352,6 +359,7 @@
     "get_hot_money_details": "quotemux_packages.akshare.source:get_hot_money_details",
     "get_index_members": "quotemux_packages.akshare.source:get_index_members",
     "get_index_quotes": "quotemux_packages.akshare.source:get_index_quotes",
+    "get_limit_order_amount": "quotemux_packages.akshare.source:get_limit_order_amount",
     "get_main_business": "quotemux_packages.akshare.source:get_main_business",
     "get_market_capital_flow": "quotemux_packages.akshare.source:get_market_capital_flow",
     "get_market_open_auctions": "quotemux_packages.akshare.source:get_market_open_auctions",

@@ -36,6 +36,18 @@ def _trading_calendar_request(exchange: str, start_date: str, end_date: str, is_
     return TradingCalendarRequest(exchange=exchange, start_date=start_date, end_date=end_date, is_open=is_open)
 
 
+def _normalized_calendar_items(items: list[TradingCalendarItem]) -> list[TradingCalendarItem]:
+    from quotemux.infra.common import format_date_value
+
+    by_key: dict[tuple[str, str], TradingCalendarItem] = {}
+    for item in items:
+        normalized_date = format_date_value(item.trade_date)
+        key = (item.exchange, normalized_date)
+        if key not in by_key:
+            by_key[key] = item.model_copy(update={"trade_date": normalized_date})
+    return sorted(by_key.values(), key=lambda item: (item.exchange, item.trade_date))
+
+
 def _offset_date_text(trade_date: str, days: int) -> str:
     from datetime import timedelta
 
@@ -299,12 +311,20 @@ def get_nine_turn(code: str, freq: str, trade_date: str, start_date: str, end_da
 
 
 def get_previous_trading_days(exchange: str, trade_date: str, n: int) -> list[TradingCalendarItem]:
-    from quotemux.infra.common import format_date_value
+    from quotemux.infra.common import format_date_value, parse_date_text
 
     actual_trade_date = format_date_value(trade_date)
+    if n <= 0:
+        return []
     start_date = _offset_date_text(actual_trade_date, -max(n * 8, 30))
-    items = _quote_mux().markets.get_trading_calendar(_trading_calendar_request(exchange, start_date, actual_trade_date, True))
-    return [item for item in items if item.trade_date < actual_trade_date][-n:]
+    items = _normalized_calendar_items(_quote_mux().markets.get_trading_calendar(_trading_calendar_request(exchange, start_date, actual_trade_date, None)))
+    open_items = [item for item in items if item.is_open and item.trade_date < actual_trade_date]
+    start_day = parse_date_text(start_date)
+    trade_day = parse_date_text(actual_trade_date)
+    if len(open_items) < n and start_day is not None and trade_day is not None:
+        yearly_items = get_yearly_trading_calendar(exchange, start_day.year, trade_day.year)
+        open_items = [item for item in yearly_items if item.is_open and start_date <= item.trade_date < actual_trade_date]
+    return open_items[-n:]
 
 
 def get_next_trading_days(exchange: str, trade_date: str, n: int) -> list[TradingCalendarItem]:
@@ -313,6 +333,8 @@ def get_next_trading_days(exchange: str, trade_date: str, n: int) -> list[Tradin
     from quotemux.infra.common import format_date_value, parse_date_text
 
     actual_trade_date = format_date_value(trade_date)
+    if n <= 0:
+        return []
     trade_day = parse_date_text(actual_trade_date)
     end_date = ""
     if trade_day is not None:
@@ -321,12 +343,17 @@ def get_next_trading_days(exchange: str, trade_date: str, n: int) -> list[Tradin
         except ValueError:
             next_year_day = date(trade_day.year + 1, 2, 28)
         end_date = next_year_day.strftime("%Y-%m-%d")
-    items = _quote_mux().markets.get_trading_calendar(_trading_calendar_request(exchange, actual_trade_date, end_date, True))
-    return [item for item in items if item.trade_date > actual_trade_date][:n]
+    items = _normalized_calendar_items(_quote_mux().markets.get_trading_calendar(_trading_calendar_request(exchange, actual_trade_date, end_date, None)))
+    open_items = [item for item in items if item.is_open and item.trade_date > actual_trade_date]
+    end_day = parse_date_text(end_date)
+    if len(open_items) < n and trade_day is not None and end_day is not None:
+        yearly_items = get_yearly_trading_calendar(exchange, trade_day.year, end_day.year)
+        open_items = [item for item in yearly_items if item.is_open and actual_trade_date < item.trade_date <= end_date]
+    return open_items[:n]
 
 
 def get_yearly_trading_calendar(exchange: str, start_year: int, end_year: int) -> list[TradingCalendarItem]:
-    return _quote_mux().markets.get_trading_calendar(_trading_calendar_request(exchange, f"{start_year}-01-01", f"{end_year}-12-31", None))
+    return _normalized_calendar_items(_quote_mux().markets.get_trading_calendar(_trading_calendar_request(exchange, f"{start_year}-01-01", f"{end_year}-12-31", None)))
 
 
 def get_board_members(board_code: str, trade_date: str) -> list[BoardMemberItem]:
@@ -684,5 +711,41 @@ def get_concept_quotes(concept_ids: list[str], freq: str, trade_date: str, start
     return get_board_quotes(concept_ids, freq, trade_date, start_date, end_date, start_time, end_time, count)
 
 def get_concept_money_flow(concept_id: str, trade_date: str, start_date: str, end_date: str, scope: str):
-    return get_board_money_flow(concept_id, trade_date, start_date, end_date, scope)
+    actual_scope = "board" if scope in {"", "concept"} else scope
+    return get_board_money_flow(concept_id, trade_date, start_date, end_date, actual_scope)
+
+
+def _money_flow_snapshot_board_codes(trade_date: str) -> list[str]:
+    from quotemux.infra.common import format_date_value
+    from quotemux.infra.db.client import query_dataframe
+
+    actual_trade_date = format_date_value(trade_date)
+    if actual_trade_date == "":
+        return []
+    frame = query_dataframe(
+        """
+        select distinct membership.board_code
+        from ref.board_stock_membership membership
+        where membership.valid_from <= %s::date
+          and (membership.valid_to is null or membership.valid_to >= %s::date)
+        order by membership.board_code
+        """,
+        (actual_trade_date, actual_trade_date),
+    )
+    if frame.empty:
+        return []
+    return [str(row["board_code"]).upper() for _, row in frame.iterrows() if str(row["board_code"]).strip() != ""]
+
+
+def get_concept_daily_money_flow_snapshot(trade_date: str, scope: str, limit: int, offset: int) -> list[BoardMoneyFlowItem]:
+    from quotemux.infra.common import format_date_value
+
+    actual_trade_date = format_date_value(trade_date)
+    if actual_trade_date == "" or scope not in {"", "concept", "board"}:
+        return []
+    board_codes = _money_flow_snapshot_board_codes(actual_trade_date)
+    rows: list[BoardMoneyFlowItem] = []
+    for board_code in board_codes:
+        rows.extend(get_board_money_flow(board_code, actual_trade_date, "", "", "board"))
+    return rows[offset: offset + limit]
 
