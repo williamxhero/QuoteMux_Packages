@@ -1,38 +1,62 @@
 {
   "package_id": "crawler_provider",
-  "version": "2026.6.22",
+  "version": "2026.6.27",
   "source_name": "crawler_provider",
   "display_name": "Crawler Provider",
-  "description": "东方财富涨跌停封单额采集 provider。",
+  "description": "读取 crawler_provider 运行库的涨跌停和题材数据 provider。",
   "capabilities": [
     {
       "capability_id": "stocks.signals.limit_order_amount",
       "support_level": "native",
       "handler_name": "get_limit_order_amount",
       "mergeable": true,
-      "notes": "仅采集已由 QuoteMux 判定为涨跌停的股票封单额。"
+      "notes": "从 crawler_provider 运行库读取涨跌停名单和封单额。"
+    },
+    {
+      "capability_id": "concepts.catalog",
+      "support_level": "native",
+      "handler_name": "get_concept_catalog",
+      "mergeable": true,
+      "notes": "从 crawler_provider 运行库读取同花顺/东方财富题材目录。"
+    },
+    {
+      "capability_id": "concepts.quotes.daily",
+      "support_level": "native",
+      "handler_name": "get_concept_quotes",
+      "mergeable": true,
+      "notes": "从 crawler_provider 运行库读取同花顺/东方财富题材日走势。"
+    },
+    {
+      "capability_id": "concepts.members",
+      "support_level": "native",
+      "handler_name": "get_concept_members",
+      "mergeable": true,
+      "notes": "从 crawler_provider 运行库读取同花顺/东方财富题材成分股。"
     }
   ],
   "capability_tags": [
     "provider",
-    "http",
+    "warehouse",
     "crawler"
   ],
   "config_schema": [
     {
-      "name": "timeout_seconds",
+      "name": "warehouse_root",
       "field_type": "string",
-      "title": "超时秒数",
-      "description": "HTTP 请求超时秒数",
+      "title": "运行库目录",
+      "description": "crawler_provider warehouse 根目录",
       "required": false,
-      "default_value": "5"
+      "default_value": "/data/crawler-provider/data/warehouse"
     }
   ],
   "secret_fields": [],
   "supports_multi_instance": true,
   "handler_targets": {
     "get_limit_order_amount": "quotemux_packages.crawler_provider.source:get_limit_order_amount",
-    "get_limit_stock_candidates": "quotemux_packages.crawler_provider.source:get_limit_stock_candidates"
+    "get_limit_stock_candidates": "quotemux_packages.crawler_provider.source:get_limit_stock_candidates",
+    "get_concept_catalog": "quotemux_packages.crawler_provider.source:get_concept_catalog",
+    "get_concept_quotes": "quotemux_packages.crawler_provider.source:get_concept_quotes",
+    "get_concept_members": "quotemux_packages.crawler_provider.source:get_concept_members"
   },
   "origin": "builtin",
   "package_root": ""
