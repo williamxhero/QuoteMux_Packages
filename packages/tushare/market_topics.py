@@ -135,6 +135,10 @@ def _fetch_connect_quota_frame(start_value: str, end_value: str) -> pd.DataFrame
 
 
 def _connect_top10_amount_columns(api_name: str, market_value: str) -> tuple[str, str, str]:
+    if api_name == "hsgt_top10" and market_value == "1":
+        return "sh_buy", "sh_sell", "sh_net_amount"
+    if api_name == "hsgt_top10" and market_value == "3":
+        return "sz_buy", "sz_sell", "sz_net_amount"
     if api_name == "ggt_top10" and market_value == "2":
         return "sh_buy", "sh_sell", "sh_net_amount"
     if api_name == "ggt_top10" and market_value == "4":

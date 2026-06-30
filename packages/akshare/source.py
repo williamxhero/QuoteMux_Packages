@@ -1246,6 +1246,7 @@ def get_hot_money_details(trade_date: str, start_date: str, end_date: str, name:
     if sort_columns:
         work = work.sort_values(sort_columns, ascending=False)
 
+    fallback_items: list[HotMoneyDetailItem] = []
     collected: list[HotMoneyDetailItem] = []
     seen: set[tuple[str, str, str]] = set()
     max_departments = min(max(limit, 6), 12)
@@ -1260,25 +1261,7 @@ def get_hot_money_details(trade_date: str, start_date: str, end_date: str, name:
             row_code = stock_code_by_name.get(stock_name, "")
             if row_code == "":
                 continue
-            key = (row_date, department_name, row_code)
-            if key in seen:
-                continue
-            seen.add(key)
-            collected.append(
-                HotMoneyDetailItem(
-                    trade_date=row_date,
-                    name=department_name,
-                    code=row_code,
-                    stock_name=stock_name,
-                    buy_amount=None,
-                    sell_amount=None,
-                    net_amount=None,
-                )
-            )
-            if len(collected) >= limit:
-                return sorted(collected, key=lambda item: (item.trade_date, item.name, item.code), reverse=True)[:limit]
-    if collected != []:
-        return sorted(collected, key=lambda item: (item.trade_date, item.name, item.code), reverse=True)[:limit]
+            fallback_items.append(HotMoneyDetailItem(trade_date=row_date, name=department_name, code=row_code, stock_name=stock_name))
 
     for _, active_row in work.head(max_departments).iterrows():
         department_code = str(active_row.get("营业部代码", ""))
@@ -1312,7 +1295,9 @@ def get_hot_money_details(trade_date: str, start_date: str, end_date: str, name:
             )
             if len(collected) >= limit:
                 return sorted(collected, key=lambda item: (item.trade_date, item.name, item.code), reverse=True)[:limit]
-    return sorted(collected, key=lambda item: (item.trade_date, item.name, item.code), reverse=True)[:limit]
+    if collected != []:
+        return sorted(collected, key=lambda item: (item.trade_date, item.name, item.code), reverse=True)[:limit]
+    return sorted(fallback_items, key=lambda item: (item.trade_date, item.name, item.code), reverse=True)[:limit]
 
 
 @lru_cache(maxsize=1)

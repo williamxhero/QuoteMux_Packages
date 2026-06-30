@@ -514,6 +514,120 @@ def _board_quote_query_start_date(start_date: str) -> str:
     return _offset_date_text(start_date, -45)
 
 
+def _board_quote_snapshot_frame(board_codes: list[str], trade_date: str) -> pd.DataFrame:
+    from quotemux.infra.db.client import query_dataframe
+
+    if board_codes == [] or trade_date == "":
+        return pd.DataFrame()
+    return query_dataframe(
+        """
+        with target_member_rows as (
+            select
+                membership.board_code,
+                membership.stock_code as code,
+                membership.weight,
+                membership.valid_from,
+                membership.valid_to
+            from ref.board_stock_membership membership
+            where membership.board_code = any(%s)
+              and membership.valid_from <= %s::date
+              and (membership.valid_to is null or membership.valid_to >= %s::date)
+        ),
+        fallback_member_dates as (
+            select
+                membership.board_code,
+                max(membership.valid_from) as valid_from
+            from ref.board_stock_membership membership
+            where membership.board_code = any(%s)
+              and membership.valid_from <= %s::date
+            group by membership.board_code
+        ),
+        fallback_member_rows as (
+            select
+                membership.board_code,
+                membership.stock_code as code,
+                membership.weight,
+                membership.valid_from,
+                membership.valid_to
+            from ref.board_stock_membership membership
+            join fallback_member_dates latest
+              on latest.board_code = membership.board_code
+             and latest.valid_from = membership.valid_from
+            where not exists (
+                select 1
+                from target_member_rows target
+                where target.board_code = membership.board_code
+            )
+        ),
+        member_rows as (
+            select * from target_member_rows
+            union all
+            select * from fallback_member_rows
+        ),
+        previous_trade_date as (
+            select max(trade_date) as trade_date
+            from fact.stock_daily_1d
+            where trade_date < %s::date
+        ),
+        daily_rows as (
+            select
+                member_rows.board_code,
+                stock_rows.trade_date,
+                stock_rows.code,
+                stock_rows.close,
+                stock_rows.volume,
+                stock_rows.amount,
+                previous_rows.close as pre_close
+            from member_rows
+            join fact.stock_daily_1d stock_rows
+              on stock_rows.code = member_rows.code
+             and stock_rows.trade_date = %s::date
+            left join fact.stock_daily_1d previous_rows
+              on previous_rows.code = stock_rows.code
+             and previous_rows.trade_date = (select trade_date from previous_trade_date)
+            where stock_rows.is_suspended = false
+              and stock_rows.is_st = false
+              and stock_rows.close is not null
+              and stock_rows.amount is not null
+              and stock_rows.amount > 0
+        ),
+        metric_rows as (
+            select
+                board_code,
+                trade_date,
+                volume,
+                amount,
+                (close - pre_close) / nullif(pre_close, 0) * 100 as pct_chg
+            from daily_rows
+            where pre_close is not null
+        ),
+        aggregate_rows as (
+            select
+                board_code,
+                trade_date,
+                sum(volume) as volume,
+                sum(amount) as amount,
+                sum(pct_chg * amount) / nullif(sum(amount), 0) as pct_chg,
+                count(*) as stock_count
+            from metric_rows
+            group by board_code, trade_date
+        )
+        select
+            aggregate_rows.board_code,
+            coalesce(board_ref.name, '') as board_name,
+            aggregate_rows.trade_date::text as trade_time,
+            aggregate_rows.volume,
+            aggregate_rows.amount,
+            aggregate_rows.pct_chg
+        from aggregate_rows
+        left join ref.board board_ref on board_ref.board_code = aggregate_rows.board_code
+        where aggregate_rows.stock_count > 0
+        order by aggregate_rows.board_code, aggregate_rows.trade_date
+        """,
+        (board_codes, trade_date, trade_date, board_codes, trade_date, trade_date, trade_date),
+    )
+
+
 def get_board_quotes(board_codes: list[str], freq: str, trade_date: str, start_date: str, end_date: str, start_time: str, end_time: str, count: int | None) -> list[BoardQuoteItem]:
     del start_time
     del end_time
@@ -526,10 +640,13 @@ def get_board_quotes(board_codes: list[str], freq: str, trade_date: str, start_d
     actual_start, actual_end = _board_quote_date_window(trade_date, start_date, end_date)
     if actual_start == "" or actual_end == "":
         return []
-    query_start = _board_quote_query_start_date(actual_start)
-    if query_start == "":
-        return []
-    frame = _board_quote_frame(normalized_codes, query_start, actual_end)
+    if actual_start == actual_end:
+        frame = _board_quote_snapshot_frame(normalized_codes, actual_end)
+    else:
+        query_start = _board_quote_query_start_date(actual_start)
+        if query_start == "":
+            return []
+        frame = _board_quote_frame(normalized_codes, query_start, actual_end)
     if frame.empty:
         return []
     work = frame.copy()

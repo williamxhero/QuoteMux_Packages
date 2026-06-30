@@ -1340,6 +1340,17 @@ def _fetch_market_capital_flow_frame(start_value: str, end_value: str) -> pd.Dat
         work["main_inflow"] = work["buy_elg_amount"].fillna(0) + work["buy_lg_amount"].fillna(0)
         work["main_outflow"] = work["sell_elg_amount"].fillna(0) + work["sell_lg_amount"].fillna(0)
     work["net_inflow"] = work["net_amount"] if "net_amount" in work.columns else None
+    if work[["main_inflow", "main_outflow"]].isna().any().any():
+        flow_frames = [_fetch_money_flow_daily_frame(day, "main") for day in sorted(work["trade_date"].astype(str).unique())]
+        flow_frames = [frame for frame in flow_frames if not frame.empty]
+        if flow_frames:
+            daily_flow = pd.concat(flow_frames, ignore_index=True)
+            if {"trade_date", "main_inflow", "main_outflow", "net_inflow"}.issubset(daily_flow.columns):
+                aggregate_flow = daily_flow.groupby("trade_date", as_index=False)[["main_inflow", "main_outflow", "net_inflow"]].sum()
+                work = work.drop(columns=["main_inflow", "main_outflow"]).merge(aggregate_flow, on="trade_date", how="left", suffixes=("", "_stock"))
+                if "net_inflow_stock" in work.columns:
+                    work["net_inflow"] = work["net_inflow"].fillna(work["net_inflow_stock"])
+                    work = work.drop(columns=["net_inflow_stock"])
     return work[["trade_date", "market", "main_inflow", "main_outflow", "net_inflow"]]
 
 
