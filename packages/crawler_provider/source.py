@@ -274,24 +274,38 @@ def get_concept_catalog(category: str, market: str, status: str, limit: int, off
         path = _latest_concept_catalog_path(provider)
         if path is None:
             continue
-        rows = _read_rows(
-            path,
-            """
-            select provider, trading_date, concept_code, concept_name, constituent_count
-            from read_parquet(?)
-            order by concept_code
-            """,
-        )
+        try:
+            rows = _read_rows(
+                path,
+                """
+                select provider, trading_date, concept_code,
+                       coalesce(url_id, '') as url_id,
+                       concept_name, constituent_count
+                from read_parquet(?, union_by_name = true)
+                order by concept_code
+                """,
+            )
+        except Exception:
+            old_rows = _read_rows(
+                path,
+                """
+                select provider, trading_date, concept_code, concept_name, constituent_count
+                from read_parquet(?)
+                order by concept_code
+                """,
+            )
+            rows = [(row[0], row[1], row[2], row[2] if str(row[0]).strip() == "ths" else "", row[3], row[4]) for row in old_rows]
         for row in rows:
             provider_text = str(row[0]).strip()
             board_type = _board_type(provider_text)
             items.append(
                 BoardCatalogItem(
                     board_code=str(row[2]).strip(),
-                    board_name=str(row[3]).strip(),
+                    board_name=str(row[4]).strip(),
                     category="concept",
                     market=board_type,
                     status="active",
+                    url_id=str(row[3]).strip(),
                 )
             )
     return sorted(items, key=lambda item: (item.market, item.board_code))[offset : offset + int(limit)]

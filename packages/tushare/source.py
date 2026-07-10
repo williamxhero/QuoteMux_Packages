@@ -191,6 +191,7 @@ def get_stock_catalog(codes: list[str], name: str, exchange: str, list_status: s
                 list_date=format_date_value(row["list_date"]),
                 delist_date=format_date_value(row["delist_date"]),
                 industry=str(row["industry"] or ""),
+                listing_board=str(row["market2"] or ""),
                 area=str(row["area"] or ""),
             )
         )

@@ -475,6 +475,13 @@
       "notes": ""
     },
     {
+      "capability_id": "stocks.quotes.intraday",
+      "support_level": "native",
+      "handler_name": "get_stock_quotes",
+      "mergeable": true,
+      "notes": "Tushare stk_mins 可作为少量单票分钟线兜底；全市场 1m 每日补齐以本地 7z 归档导入为准"
+    },
+    {
       "capability_id": "stocks.reference.bse_code_mappings",
       "support_level": "native",
       "handler_name": "get_bse_code_mappings",

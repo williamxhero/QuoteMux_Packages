@@ -55,6 +55,13 @@
       "notes": "基于交易日历派生年度范围日历。"
     },
     {
+      "capability_id": "boards.quotes.daily",
+      "support_level": "derived",
+      "handler_name": "get_industry_board_quotes",
+      "mergeable": false,
+      "notes": "基于 ref.stock.industry 与个股日线派生行业板块日线。"
+    },
+    {
       "capability_id": "concepts.members",
       "support_level": "derived",
       "handler_name": "get_concept_members",
@@ -66,7 +73,7 @@
       "support_level": "derived",
       "handler_name": "get_concept_quotes",
       "mergeable": true,
-      "notes": "基于本地板块成分和个股日线按成交额加权派生板块强弱指标。"
+      "notes": "基于 ref.concept_stock_membership 与个股日线按成交额加权派生概念强弱指标。"
     },
     {
       "capability_id": "concepts.indicators.money_flow",
@@ -96,6 +103,7 @@
     "get_nine_turn": "quotemux_packages.derived_core.source:get_nine_turn",
     "get_concept_money_flow": "quotemux_packages.derived_core.source:get_concept_money_flow",
     "get_concept_daily_money_flow_snapshot": "quotemux_packages.derived_core.source:get_concept_daily_money_flow_snapshot",
+    "get_industry_board_quotes": "quotemux_packages.derived_core.source:get_industry_board_quotes",
     "get_concept_members": "quotemux_packages.derived_core.source:get_concept_members",
     "get_concept_quotes": "quotemux_packages.derived_core.source:get_concept_quotes",
     "get_next_trading_days": "quotemux_packages.derived_core.source:get_next_trading_days",
