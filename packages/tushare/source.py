@@ -91,7 +91,7 @@ def _stock_exchange_from_ts_code(ts_code: str) -> str:
 
 def _stock_market_from_row(market_text: str, exchange: str, code: str) -> str:
     text = str(market_text).lower()
-    if exchange == "BSE" or code.startswith(("4", "8", "9")):
+    if exchange == "BSE" or code.startswith(("4", "8")) or code.startswith("920"):
         return "beijing"
     if "科创" in text or code.startswith("688"):
         return "star_market"

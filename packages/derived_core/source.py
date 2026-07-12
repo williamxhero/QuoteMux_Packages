@@ -368,7 +368,7 @@ def get_board_members(board_code: str, trade_date: str) -> list[BoardMemberItem]
             stock.name
         from ref.board board
         join ref.stock stock
-          on stock.board_type = board.name
+          on stock.industry = board.name
         where board.board_code = %s
           and board.board_type = 'industry'
           and board.status = 'active'
@@ -594,6 +594,91 @@ def _canonical_concept_quote_frame(concept_ids: list[str], start_date: str, end_
     )
 
 
+def _canonical_concept_quote_snapshot_frame(concept_ids: list[str], trade_date: str) -> pd.DataFrame:
+    from quotemux.infra.db.client import query_dataframe
+
+    if concept_ids == [] or trade_date == "":
+        return pd.DataFrame()
+    return query_dataframe(
+        """
+        with snapshot_dates as (
+            select
+                membership.concept_id,
+                coalesce(
+                    max(membership.valid_from) filter (where membership.valid_from <= %s::date),
+                    min(membership.valid_from)
+                ) as valid_from
+            from ref.concept_stock_membership membership
+            where membership.concept_id = any(%s)
+            group by membership.concept_id
+        ),
+        member_rows as (
+            select
+                membership.concept_id,
+                membership.stock_market,
+                membership.stock_code as code
+            from ref.concept_stock_membership membership
+            join snapshot_dates snapshot
+              on snapshot.concept_id = membership.concept_id
+             and snapshot.valid_from = membership.valid_from
+            where membership.valid_to is null or membership.valid_to >= %s::date
+        ),
+        previous_trade_date as (
+            select max(trade_date) as trade_date
+            from fact.stock_daily_1d
+            where trade_date < %s::date
+        ),
+        daily_rows as (
+            select
+                member_rows.concept_id,
+                stock_rows.trade_date,
+                stock_rows.close,
+                stock_rows.volume,
+                stock_rows.amount,
+                previous_rows.close as pre_close
+            from member_rows
+            join fact.stock_daily_1d stock_rows
+              on stock_rows.market = member_rows.stock_market
+             and stock_rows.code = member_rows.code
+             and stock_rows.trade_date = %s::date
+            left join fact.stock_daily_1d previous_rows
+              on previous_rows.market = stock_rows.market
+             and previous_rows.code = stock_rows.code
+             and previous_rows.trade_date = (select trade_date from previous_trade_date)
+            where coalesce(stock_rows.is_suspended, false) = false
+              and coalesce(stock_rows.is_st, false) = false
+              and stock_rows.close is not null
+              and stock_rows.amount is not null
+              and stock_rows.amount > 0
+        ),
+        aggregate_rows as (
+            select
+                concept_id,
+                trade_date,
+                sum(volume) as volume,
+                sum(amount) as amount,
+                sum(((close - pre_close) / nullif(pre_close, 0) * 100) * amount)
+                    / nullif(sum(amount) filter (where pre_close is not null), 0) as pct_chg,
+                count(*) filter (where pre_close is not null) as stock_count
+            from daily_rows
+            group by concept_id, trade_date
+        )
+        select
+            aggregate_rows.concept_id as board_code,
+            coalesce(concept_ref.name, '') as board_name,
+            aggregate_rows.trade_date::text as trade_time,
+            aggregate_rows.volume,
+            aggregate_rows.amount,
+            aggregate_rows.pct_chg
+        from aggregate_rows
+        left join ref.concept concept_ref on concept_ref.concept_id = aggregate_rows.concept_id
+        where aggregate_rows.stock_count > 0
+        order by aggregate_rows.concept_id, aggregate_rows.trade_date
+        """,
+        (trade_date, concept_ids, trade_date, trade_date, trade_date),
+    )
+
+
 def _industry_board_quote_frame(start_date: str, end_date: str, board_codes: list[str]) -> pd.DataFrame:
     from quotemux.infra.db.client import query_dataframe
 
@@ -614,12 +699,18 @@ def _industry_board_quote_frame(start_date: str, end_date: str, board_codes: lis
                 stock_rows.trade_date,
                 stock_rows.market,
                 stock_rows.code,
+                stock_rows.open,
+                stock_rows.high,
+                stock_rows.low,
                 stock_rows.close,
                 stock_rows.volume,
                 stock_rows.amount,
-                lag(stock_rows.close) over (
-                    partition by stock_rows.market, stock_rows.code
-                    order by stock_rows.trade_date
+                coalesce(
+                    stock_rows.pre_close,
+                    lag(stock_rows.close) over (
+                        partition by stock_rows.market, stock_rows.code
+                        order by stock_rows.trade_date
+                    )
                 ) as pre_close
             from fact.stock_daily_1d stock_rows
             join ref.stock stock_ref
@@ -630,6 +721,9 @@ def _industry_board_quote_frame(start_date: str, end_date: str, board_codes: lis
               {industry_filter}
               and coalesce(stock_rows.is_suspended, false) = false
               and coalesce(stock_rows.is_st, false) = false
+              and stock_rows.open is not null
+              and stock_rows.high is not null
+              and stock_rows.low is not null
               and stock_rows.close is not null
               and stock_rows.amount is not null
               and stock_rows.amount > 0
@@ -638,21 +732,31 @@ def _industry_board_quote_frame(start_date: str, end_date: str, board_codes: lis
             select
                 industry,
                 trade_date,
+                sum(open * amount) / nullif(sum(amount) filter (where pre_close is not null), 0) as open,
+                sum(high * amount) / nullif(sum(amount) filter (where pre_close is not null), 0) as high,
+                sum(low * amount) / nullif(sum(amount) filter (where pre_close is not null), 0) as low,
+                sum(close * amount) / nullif(sum(amount) filter (where pre_close is not null), 0) as close,
+                sum(pre_close * amount) / nullif(sum(amount) filter (where pre_close is not null), 0) as pre_close,
                 sum(volume) as volume,
                 sum(amount) as amount,
-                sum(((close - pre_close) / nullif(pre_close, 0) * 100) * amount)
-                    / nullif(sum(amount) filter (where pre_close is not null), 0) as pct_chg,
                 count(*) filter (where pre_close is not null) as stock_count
             from daily_rows
+            where pre_close is not null
             group by industry, trade_date
         )
         select
             'INDUSTRY:' || industry as board_code,
             industry as board_name,
             trade_date::text as trade_time,
+            open,
+            high,
+            low,
+            close,
+            pre_close,
+            close - pre_close as change,
+            (close - pre_close) / nullif(pre_close, 0) * 100 as pct_chg,
             volume,
-            amount,
-            pct_chg
+            amount
         from aggregate_rows
         where stock_count > 0
         order by industry, trade_date
@@ -685,6 +789,36 @@ def _derived_quote_items(frame: pd.DataFrame, start_date: str, end_date: str, co
     ]
 
 
+def _industry_quote_items(frame: pd.DataFrame, start_date: str, end_date: str, count: int | None) -> list[BoardQuoteItem]:
+    if frame.empty:
+        return []
+    work = frame.copy()
+    metric_columns = ("open", "high", "low", "close", "pre_close", "change", "pct_chg", "amount", "volume")
+    for column_name in metric_columns:
+        work[column_name] = pd.to_numeric(work[column_name], errors="coerce")
+    work = work[(work["trade_time"] >= start_date) & (work["trade_time"] <= end_date)]
+    if count:
+        work = work.sort_values("trade_time").groupby("board_code", group_keys=False).tail(count)
+    return [
+        BoardQuoteItem(
+            board_code=str(row["board_code"]),
+            board_name=str(row["board_name"]),
+            trade_time=str(row["trade_time"]),
+            freq="1d",
+            open=float(row["open"]) if pd.notna(row["open"]) else None,
+            high=float(row["high"]) if pd.notna(row["high"]) else None,
+            low=float(row["low"]) if pd.notna(row["low"]) else None,
+            close=float(row["close"]) if pd.notna(row["close"]) else None,
+            pre_close=float(row["pre_close"]) if pd.notna(row["pre_close"]) else None,
+            change=float(row["change"]) if pd.notna(row["change"]) else None,
+            pct_chg=float(row["pct_chg"]) if pd.notna(row["pct_chg"]) else None,
+            volume=float(row["volume"]) if pd.notna(row["volume"]) else None,
+            amount=float(row["amount"]) if pd.notna(row["amount"]) else None,
+        )
+        for _, row in work.iterrows()
+    ]
+
+
 def get_industry_board_quotes(board_codes: list[str], freq: str, trade_date: str, start_date: str, end_date: str, start_time: str, end_time: str, count: int | None) -> list[BoardQuoteItem]:
     del start_time, end_time
     if freq != "1d":
@@ -695,7 +829,7 @@ def get_industry_board_quotes(board_codes: list[str], freq: str, trade_date: str
     query_start = _board_quote_query_start_date(actual_start)
     if query_start == "":
         return []
-    return _derived_quote_items(_industry_board_quote_frame(query_start, actual_end, board_codes), actual_start, actual_end, count)
+    return _industry_quote_items(_industry_board_quote_frame(query_start, actual_end, board_codes), actual_start, actual_end, count)
 
 
 def _board_quote_snapshot_frame(board_codes: list[str], trade_date: str) -> pd.DataFrame:
@@ -1016,6 +1150,8 @@ def get_concept_quotes(concept_ids: list[str], freq: str, trade_date: str, start
         actual_start, actual_end = _board_quote_date_window(trade_date, start_date, end_date)
         if actual_start == "" or actual_end == "":
             return []
+        if actual_start == actual_end:
+            return _derived_quote_items(_canonical_concept_quote_snapshot_frame(normalized_ids, actual_end), actual_start, actual_end, count)
         query_start = _board_quote_query_start_date(actual_start)
         if query_start == "":
             return []
