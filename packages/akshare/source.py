@@ -40,6 +40,7 @@ def _patched_request(self, method, url, **kwargs):
 requests.Session.request = _patched_request
 
 from quotemux.infra.cache.store import build_cache_path, filter_frame_by_date_range, filter_frame_by_datetime_range, latest_n_rows, merge_cache_frame, read_cache_frame, write_cache_frame
+from quotemux.common import intraday_quote_cache_needs_refresh
 from quotemux.infra.common import add_quote_metrics, aggregate_ohlc, build_time_bounds, format_date_value, format_datetime_value, normalize_index_code, normalize_stock_code, split_csv
 from quotemux.runtime_core.quality import build_akshare_index_symbol, calibrate_quote_units
 from quotemux.infra.provider_runtime.core import call_provider_api
@@ -463,7 +464,7 @@ def get_stock_quotes(
         cache_df = read_cache_frame(cache_path)
         filtered_cache = filter_frame_by_datetime_range(cache_df, "trade_time", start_dt, end_dt)
         cache_incomplete = not freq.endswith("m") and not _stock_daily_cache_complete(filtered_cache)
-        if filtered_cache.empty or cache_incomplete or (count and len(filtered_cache) < count):
+        if filtered_cache.empty or cache_incomplete or (count and len(filtered_cache) < count) or intraday_quote_cache_needs_refresh(filtered_cache, freq, start_dt, end_dt, count):
             if freq.endswith("m"):
                 fetched_df = _fetch_stock_intraday_frame(normalized_code, freq, start_dt, end_dt)
             else:

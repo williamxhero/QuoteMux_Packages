@@ -6,6 +6,7 @@ import os
 import pandas as pd
 
 from quotemux.infra.cache.store import build_cache_path, filter_frame_by_datetime_range, latest_n_rows, merge_cache_frame, read_cache_frame, write_cache_frame
+from quotemux.common import intraday_quote_cache_needs_refresh
 from quotemux.infra.common import build_time_bounds, format_datetime_value, normalize_index_code, normalize_stock_code
 from quotemux.runtime_core.quality import calibrate_quote_units
 from quotemux.infra.provider_runtime.core import call_provider_api
@@ -257,7 +258,7 @@ def get_stock_quotes(
         cache_path = build_cache_path("mootdx", ["stocks", "quotes"], {"code": normalized_code, "freq": freq})
         cache_df = read_cache_frame(cache_path)
         filtered_cache = filter_frame_by_datetime_range(cache_df, "trade_time", start_dt, end_dt)
-        if filtered_cache.empty or (count and len(filtered_cache) < count):
+        if filtered_cache.empty or (count and len(filtered_cache) < count) or intraday_quote_cache_needs_refresh(filtered_cache, freq, start_dt, end_dt, count):
             fetched_df = _fetch_stock_history_frame(normalized_code, freq, start_dt, end_dt)
             if not fetched_df.empty:
                 cache_df = merge_cache_frame(cache_df, fetched_df, ["code", "trade_time", "freq"], ["trade_time"])

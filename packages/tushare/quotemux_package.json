@@ -537,7 +537,7 @@
       "title": "超时秒数",
       "description": "Tushare 请求超时秒数",
       "required": false,
-      "default_value": "15"
+      "default_value": "60"
     }
   ],
   "secret_fields": [

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from functools import lru_cache
+from threading import local
 
 import pandas as pd
 
 from quotemux.infra.cache.store import build_cache_path, filter_frame_by_datetime_range, latest_n_rows, merge_cache_frame, read_cache_frame, write_cache_frame
+from quotemux.common import intraday_quote_cache_needs_refresh
 from quotemux.infra.common import INTRADAY_RULES, add_quote_metrics, aggregate_ohlc, build_time_bounds, format_datetime_value, normalize_index_code, normalize_stock_code
 from quotemux.infra.provider_runtime.core import call_provider_api
 from platform_models import IndexQuoteItem, StockQuoteItem
@@ -33,6 +36,7 @@ finally:
 DEFAULT_LOOKBACK_DAYS = 10
 MINUTES_PER_TRADE_DAY = 242
 DAILY_FREQS = {"1d", "1w", "1mo"}
+_CLIENT_STATE = local()
 
 
 def _is_available() -> bool:
@@ -46,7 +50,7 @@ def _require_available() -> None:
 
 def _market_from_code(code: str):
     normalized = normalize_stock_code(code)
-    if normalized.startswith(("4", "8")):
+    if normalized.startswith(("4", "8", "920")):
         return MARKET.BJ
     if normalized.startswith(("5", "6", "9")):
         return MARKET.SH
@@ -79,7 +83,9 @@ def _period_from_freq(freq: str):
 
 
 def _estimate_bar_count(start_dt: datetime, end_dt: datetime) -> int:
-    span_days = max(1, (end_dt.date() - start_dt.date()).days + 1)
+    # OpenTDX 从最新一根开始倒序返回，补历史日期时必须覆盖目标日到今天的区间。
+    latest_date = max(end_dt.date(), datetime.now().date())
+    span_days = max(1, (latest_date - start_dt.date()).days + 1)
     return min(60000, max(MINUTES_PER_TRADE_DAY, span_days * MINUTES_PER_TRADE_DAY))
 
 
@@ -97,11 +103,23 @@ def _client_factory():
 def _call_tdx(api_name: str, func, *args, **kwargs):
     _require_available()
 
-    def _invoke():
-        with _client_factory()() as client:
-            return func(client, *args, **kwargs)
+    client = getattr(_CLIENT_STATE, "client", None)
+    if client is None:
+        # provider worker 内按线程复用连接，避免全市场补采为每只股票重复登录公共节点。
+        client = _client_factory()()
+        _CLIENT_STATE.client = client
 
-    return call_provider_api("opentdx", api_name, _invoke)
+    def _invoke():
+        return func(client, *args, **kwargs)
+
+    try:
+        return call_provider_api("opentdx", api_name, _invoke)
+    except Exception:
+        try:
+            client.__exit__(None, None, None)
+        finally:
+            _CLIENT_STATE.client = None
+        raise
 
 
 def _fetch_stock_intraday_frame(code: str, start_dt: datetime, end_dt: datetime, adjust: str) -> pd.DataFrame:
@@ -304,31 +322,49 @@ def get_stock_quotes(
     elif request_end_dt is None:
         request_end_dt = datetime.now()
 
-    items: list[StockQuoteItem] = []
-    for code in codes:
+    def _load_code(code: str) -> list[StockQuoteItem]:
         normalized_code = normalize_stock_code(code)
         cache_path = build_cache_path("opentdx", ["stocks", "quotes"], {"code": normalized_code, "adjust": adjust, "source_freq": "1m" if intraday else freq})
         cache_df = read_cache_frame(cache_path)
         need_refresh = True
         if not cache_df.empty:
             filtered_cache = filter_frame_by_datetime_range(cache_df, "trade_time", request_start_dt, request_end_dt)
-            need_refresh = filtered_cache.empty
+            need_refresh = filtered_cache.empty or intraday_quote_cache_needs_refresh(filtered_cache, freq, request_start_dt, request_end_dt, count)
         if need_refresh:
-            fetched_df = _fetch_stock_intraday_frame(normalized_code, request_start_dt, request_end_dt, adjust) if intraday else _fetch_stock_daily_frame(normalized_code, freq, request_start_dt, request_end_dt, adjust)
+            try:
+                fetched_df = _fetch_stock_intraday_frame(normalized_code, request_start_dt, request_end_dt, adjust) if intraday else _fetch_stock_daily_frame(normalized_code, freq, request_start_dt, request_end_dt, adjust)
+            except Exception:
+                # 单只股票连接失败不能丢弃同批其他股票，缺口交给后续 provider 或下一轮补采。
+                fetched_df = pd.DataFrame()
             if not fetched_df.empty:
                 merged_df = merge_cache_frame(cache_df, fetched_df, ["code", "trade_time", "freq"], ["trade_time"])
                 write_cache_frame(cache_path, merged_df)
                 cache_df = merged_df
         filtered_df = filter_frame_by_datetime_range(cache_df, "trade_time", request_start_dt, request_end_dt)
         if filtered_df.empty:
-            continue
+            return []
         filtered_df["trade_time"] = pd.to_datetime(filtered_df["trade_time"], errors="coerce")
         agg_df = add_quote_metrics(aggregate_ohlc(filtered_df, freq)) if intraday else filtered_df
         agg_df["code"] = normalized_code
         agg_df["freq"] = freq
         agg_df["adjust"] = adjust
         agg_df = latest_n_rows(agg_df, "trade_time", count)
-        items.extend(_frame_to_stock_quotes(agg_df, freq))
+        return _frame_to_stock_quotes(agg_df, freq)
+
+    items: list[StockQuoteItem] = []
+    if intraday and len(codes) > 1:
+        # 每只股票使用独立客户端和缓存文件，四路并发与 provider 运行时上限一致。
+        with ThreadPoolExecutor(max_workers=min(4, len(codes))) as executor:
+            batch_items = list(executor.map(_load_code, codes))
+        # 批内已有成功结果时，顺序重试少数瞬时失败代码，避免整条 fallback 链被放大。
+        if any(batch_items):
+            batch_items = [code_items if code_items else _load_code(code) for code, code_items in zip(codes, batch_items)]
+        for code_items in batch_items:
+            items.extend(code_items)
+        return items
+
+    for code in codes:
+        items.extend(_load_code(code))
     return items
 
 

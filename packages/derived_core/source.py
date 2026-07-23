@@ -551,6 +551,7 @@ def _canonical_concept_quote_frame(concept_ids: list[str], start_date: str, end_
                 stock_rows.close,
                 stock_rows.volume,
                 stock_rows.amount,
+                stock_rows.pct_chg,
                 lag(stock_rows.close) over (
                     partition by member_rows.concept_id, stock_rows.market, stock_rows.code
                     order by stock_rows.trade_date
@@ -572,8 +573,8 @@ def _canonical_concept_quote_frame(concept_ids: list[str], start_date: str, end_
                 trade_date,
                 sum(volume) as volume,
                 sum(amount) as amount,
-                sum(((close - pre_close) / nullif(pre_close, 0) * 100) * amount)
-                    / nullif(sum(amount) filter (where pre_close is not null), 0) as pct_chg,
+                sum(pct_chg * amount) filter (where pct_chg is not null)
+                    / nullif(sum(amount) filter (where pct_chg is not null), 0) as pct_chg,
                 count(*) filter (where pre_close is not null) as stock_count
             from daily_rows
             group by concept_id, trade_date
@@ -635,6 +636,7 @@ def _canonical_concept_quote_snapshot_frame(concept_ids: list[str], trade_date: 
                 stock_rows.close,
                 stock_rows.volume,
                 stock_rows.amount,
+                stock_rows.pct_chg,
                 previous_rows.close as pre_close
             from member_rows
             join fact.stock_daily_1d stock_rows
@@ -657,8 +659,8 @@ def _canonical_concept_quote_snapshot_frame(concept_ids: list[str], trade_date: 
                 trade_date,
                 sum(volume) as volume,
                 sum(amount) as amount,
-                sum(((close - pre_close) / nullif(pre_close, 0) * 100) * amount)
-                    / nullif(sum(amount) filter (where pre_close is not null), 0) as pct_chg,
+                sum(pct_chg * amount) filter (where pct_chg is not null)
+                    / nullif(sum(amount) filter (where pct_chg is not null), 0) as pct_chg,
                 count(*) filter (where pre_close is not null) as stock_count
             from daily_rows
             group by concept_id, trade_date

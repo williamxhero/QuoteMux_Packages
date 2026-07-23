@@ -9,7 +9,8 @@ import pandas as pd
 from quotemux.infra.cache.store import build_cache_path, filter_frame_by_date_range, filter_frame_by_datetime_range, latest_n_rows, merge_cache_frame, plan_missing_ranges, read_cache_frame, write_cache_frame
 from quotemux.infra.config import DATE_FORMAT
 from quotemux.infra.provider_config import get_provider_api_key
-from platform_models import AdjFactorItem, BoardCatalogItem, BoardCategoryItem, BoardMemberHistoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, IndexCatalogItem, IndexMemberItem, IndexQuoteItem, MarketCapitalFlowItem, NameHistoryItem, ShareholderChangeItem, StockBasicInfo, StockFinancialStatementItem, StockMoneyFlowItem, StockQuoteItem, TechnicalFactorItem, TradingCalendarItem, TradingSessionItem
+from quotemux.common import intraday_quote_cache_needs_refresh
+from platform_models import AdjFactorItem, BoardCatalogItem, BoardCategoryItem, BoardMemberHistoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, BSECodeMappingItem, IndexCatalogItem, IndexMemberItem, IndexQuoteItem, MarketCapitalFlowItem, NameHistoryItem, ShareholderChangeItem, StockBasicInfo, StockFinancialStatementItem, StockMoneyFlowItem, StockQuoteItem, TechnicalFactorItem, TradingCalendarItem, TradingSessionItem
 from quotemux.infra.common import INTRADAY_RULES, aggregate_ohlc, add_quote_metrics, build_time_bounds, format_date_value, format_datetime_value, index_code_to_ts, normalize_index_code, normalize_stock_code, stock_code_to_ts
 from .rate_limit import call_tushare_api
 
@@ -152,9 +153,15 @@ def _fetch_stock_basic_frame(status: str) -> pd.DataFrame:
     return work[["code", "name", "exchange", "market2", "list_status2", "list_date", "delist_date", "industry", "area"]]
 
 
-def _load_stock_basic_frame(status: str) -> pd.DataFrame:
+def _load_stock_basic_frame(status: str, refresh: bool = False) -> pd.DataFrame:
     cache_path = build_cache_path("tushare", ["stocks", "catalog"], {"status": status})
     cache_df = read_cache_frame(cache_path)
+    if refresh:
+        fetched_df = _fetch_stock_basic_frame(status)
+        if fetched_df.empty:
+            return fetched_df
+        write_cache_frame(cache_path, fetched_df)
+        return fetched_df
     if cache_df.empty:
         fetched_df = _fetch_stock_basic_frame(status)
         if not fetched_df.empty:
@@ -163,12 +170,37 @@ def _load_stock_basic_frame(status: str) -> pd.DataFrame:
     return cache_df
 
 
-def get_stock_catalog(codes: list[str], name: str, exchange: str, list_status: str, include_delisted: bool, limit: int, offset: int) -> list[StockBasicInfo]:
-    frames = [_load_stock_basic_frame(status) for status in _stock_statuses(list_status, include_delisted)]
+def _apply_bse_code_mappings(frame: pd.DataFrame, mappings: list[BSECodeMappingItem]) -> pd.DataFrame:
+    if frame.empty or mappings == []:
+        return frame
+    work = frame.copy()
+    present_codes = set(work["code"].astype(str))
+    for mapping in mappings:
+        if mapping.new_code not in present_codes:
+            continue
+        old_code_rows = work["code"].astype(str) == mapping.old_code
+        if not old_code_rows.any():
+            old_code_item = work[work["code"].astype(str) == mapping.new_code].iloc[[0]].copy()
+            old_code_item.loc[:, "code"] = mapping.old_code
+            work = pd.concat([work, old_code_item], ignore_index=True)
+            present_codes.add(mapping.old_code)
+            old_code_rows = work["code"].astype(str) == mapping.old_code
+        work.loc[old_code_rows, "list_status2"] = "delisted"
+        work.loc[old_code_rows, "delist_date"] = mapping.effective_date
+    return work
+
+
+def get_stock_catalog(codes: list[str], name: str, exchange: str, list_status: str, include_delisted: bool, limit: int, offset: int, refresh: bool = False) -> list[StockBasicInfo]:
+    statuses = _stock_statuses(list_status, include_delisted)
+    frames = [_load_stock_basic_frame(status, refresh) for status in statuses]
+    if refresh and include_delisted and statuses == TS_STOCK_LIST_STATUS and (frames[0].empty or frames[1].empty):
+        return []
     frames = [frame for frame in frames if not frame.empty]
     if frames == []:
         return []
     work = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["code"], keep="last")
+    # 北交所改号后目录只保留新代码；以 Tushare 改号表补充旧代码终止记录。
+    work = _apply_bse_code_mappings(work, get_bse_code_mappings("", "", "active"))
     normalized_codes = [normalize_stock_code(code) for code in codes if normalize_stock_code(code)]
     if normalized_codes:
         work = work[work["code"].isin(normalized_codes)]
@@ -205,11 +237,33 @@ def get_stock_basic(code: str) -> StockBasicInfo | None:
 
 def get_stock_name_history(code: str, start_date: str, end_date: str) -> list[NameHistoryItem]:
     pro = get_ts_pro()
-    ts_code = stock_code_to_ts(code)
-    if pro is None or ts_code == "":
+    if pro is None:
         return []
+    request_kwargs: dict[str, str] = {}
+    ts_code = stock_code_to_ts(code)
+    if ts_code != "":
+        request_kwargs["ts_code"] = ts_code
+    actual_start_date = _to_tushare_date(start_date)
+    actual_end_date = _to_tushare_date(end_date)
+    if actual_start_date != "":
+        request_kwargs["start_date"] = actual_start_date
+    if actual_end_date != "":
+        request_kwargs["end_date"] = actual_end_date
     try:
-        df = call_tushare_api("namechange", pro.namechange, ts_code=ts_code, start_date=_to_tushare_date(start_date), end_date=_to_tushare_date(end_date))
+        if ts_code != "":
+            df = call_tushare_api("namechange", pro.namechange, **request_kwargs)
+        else:
+            frames: list[pd.DataFrame] = []
+            offset = 0
+            while True:
+                page = call_tushare_api("namechange", pro.namechange, limit=5000, offset=offset, **request_kwargs)
+                if page is None or page.empty:
+                    break
+                frames.append(page)
+                if len(page) < 5000:
+                    break
+                offset += len(page)
+            df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     except Exception:
         return []
     if df is None or df.empty:
@@ -219,8 +273,10 @@ def get_stock_name_history(code: str, start_date: str, end_date: str) -> list[Na
         if column not in work.columns:
             work[column] = ""
     items: list[NameHistoryItem] = []
-    normalized = normalize_stock_code(code)
     for _, row in work.sort_values("start_date").iterrows():
+        normalized = normalize_stock_code(str(row["ts_code"]))
+        if normalized == "":
+            continue
         items.append(
             NameHistoryItem(
                 code=normalized,
@@ -982,6 +1038,9 @@ def get_stock_quotes(
         range_start = fetch_start_dt.strftime("%Y%m%d") if fetch_start_dt else ""
         range_end = fetch_end_dt.strftime("%Y%m%d") if fetch_end_dt else ""
         missing_ranges = plan_missing_ranges(cache_df, "trade_time", range_start, range_end, "day")
+        filtered_cache = filter_frame_by_datetime_range(cache_df, "trade_time", request_start_dt, request_end_dt)
+        if intraday_quote_cache_needs_refresh(filtered_cache, freq, request_start_dt, request_end_dt, count):
+            missing_ranges = [(range_start, range_end)]
         fetched_frames: list[pd.DataFrame] = []
         for missing_start, missing_end in missing_ranges:
             start_dt = datetime.strptime(missing_start, "%Y%m%d")
