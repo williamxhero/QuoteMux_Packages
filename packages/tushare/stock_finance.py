@@ -453,6 +453,7 @@ def get_forecasts(code: str, report_period: str, start_period: str, end_period: 
         ForecastItem(
             code=str(row["code"]),
             report_period=str(row["report_period"]),
+            announce_date="",
             forecast_type=str(row["forecast_type"]) if pd.notna(row["forecast_type"]) else "",
             forecast_summary=str(row["forecast_summary"]) if pd.notna(row["forecast_summary"]) else "",
             net_profit_min=float(row["net_profit_min"]) if pd.notna(row["net_profit_min"]) else None,

@@ -44,7 +44,7 @@ from quotemux.common import intraday_quote_cache_needs_refresh
 from quotemux.infra.common import add_quote_metrics, aggregate_ohlc, build_time_bounds, format_date_value, format_datetime_value, normalize_index_code, normalize_stock_code, split_csv
 from quotemux.runtime_core.quality import build_akshare_index_symbol, calibrate_quote_units
 from quotemux.infra.provider_runtime.core import call_provider_api
-from platform_models import AuctionItem, BlockTradeItem, BoardCatalogItem, BoardCategoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, ConnectCapitalFlowItem, DisclosureDateItem, DividendItem, DragonTigerInstitutionItem, DragonTigerItem, ExpressItem, ForecastItem, HKConnectHoldingItem, HotMoneyDetailItem, IndexMemberItem, IndexQuoteItem, LimitOrderAmountItem, MainBusinessItem, MarketCapitalFlowItem, NewsEventItem, PledgeDetailItem, PledgeStatItem, RankingResearchReportItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockFinanceIndicatorItem, StockFinancialStatementItem, StockMoneyFlowItem, StockProfileItem, StockQuoteItem, SurveyItem, TradingCalendarItem, UnlockScheduleItem
+from platform_models import AdjFactorItem, AuctionItem, BlockTradeItem, BoardCatalogItem, BoardCategoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, ConnectCapitalFlowItem, DisclosureDateItem, DividendItem, DragonTigerInstitutionItem, DragonTigerItem, ExpressItem, ForecastItem, HKConnectHoldingItem, HotMoneyDetailItem, IndexMemberItem, IndexQuoteItem, LimitOrderAmountItem, MainBusinessItem, MarketCapitalFlowItem, NewsEventItem, PledgeDetailItem, PledgeStatItem, RankingResearchReportItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockFinanceIndicatorItem, StockFinancialStatementItem, StockMoneyFlowItem, StockProfileItem, StockQuoteItem, SurveyItem, TradingCalendarItem, UnlockScheduleItem
 
 
 DEFAULT_LOOKBACK_DAYS = 30
@@ -236,6 +236,70 @@ def _stock_market(code: str) -> str:
     if normalized_code.startswith(("4", "8", "9")):
         return "bj"
     return "sz"
+
+
+def _akshare_stock_symbol(code: str) -> str:
+    normalized_code = normalize_stock_code(code)
+    if normalized_code.startswith(("5", "6", "9")):
+        return f"sh{normalized_code}"
+    if normalized_code.startswith(("4", "8", "920")):
+        return f"bj{normalized_code}"
+    return f"sz{normalized_code}"
+
+
+def get_adj_factors(code: str, start_date: str, end_date: str, base_date: str) -> list[AdjFactorItem]:
+    del base_date
+    normalized_code = normalize_stock_code(code)
+    if not normalized_code.startswith(("2", "9")):
+        return []
+    start_value = format_date_value(start_date)
+    end_value = format_date_value(end_date)
+    if start_value == "" or end_value == "":
+        return []
+    symbol = _akshare_stock_symbol(normalized_code)
+    try:
+        daily = _call_ak(
+            "stock_zh_b_daily",
+            ak.stock_zh_b_daily,
+            symbol=symbol,
+            start_date=start_value.replace("-", ""),
+            end_date=end_value.replace("-", ""),
+            adjust="",
+        )
+        factors = _call_ak(
+            "stock_zh_b_daily_hfq_factor",
+            ak.stock_zh_b_daily,
+            symbol=symbol,
+            start_date=start_value.replace("-", ""),
+            end_date=end_value.replace("-", ""),
+            adjust="hfq-factor",
+        )
+    except Exception:
+        return []
+    if daily is None or daily.empty or factors is None or factors.empty:
+        return []
+    daily_dates = pd.to_datetime(daily["date"] if "date" in daily.columns else daily.index, errors="coerce")
+    factor_work = factors.copy()
+    factor_work["date"] = pd.to_datetime(factor_work["date"], errors="coerce")
+    factor_work["adj_factor"] = pd.to_numeric(factor_work["hfq_factor"], errors="coerce")
+    factor_work = factor_work.dropna(subset=["date", "adj_factor"]).sort_values("date")
+    if factor_work.empty:
+        return []
+    daily_work = pd.DataFrame({"date": daily_dates}).dropna().sort_values("date")
+    merged = pd.merge_asof(
+        daily_work,
+        factor_work[["date", "adj_factor"]],
+        on="date",
+        direction="backward",
+    ).dropna(subset=["adj_factor"])
+    return [
+        AdjFactorItem(
+            code=normalized_code,
+            trade_date=row["date"].strftime("%Y%m%d"),
+            adj_factor=float(row["adj_factor"]),
+        )
+        for _, row in merged.iterrows()
+    ]
 
 
 def _resolve_time_window(

@@ -2,15 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from functools import lru_cache
+import math
 import threading
 
 import pandas as pd
 
 from quotemux.infra.cache.store import build_cache_path, filter_frame_by_date_range, filter_frame_by_datetime_range, latest_n_rows, merge_cache_frame, plan_missing_ranges, read_cache_frame, write_cache_frame
 from quotemux.infra.config import DATE_FORMAT
-from quotemux.infra.provider_config import get_provider_api_key
+from quotemux.infra.provider_config import get_provider_api_key, get_provider_config_value
 from quotemux.common import intraday_quote_cache_needs_refresh
-from platform_models import AdjFactorItem, BoardCatalogItem, BoardCategoryItem, BoardMemberHistoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, BSECodeMappingItem, IndexCatalogItem, IndexMemberItem, IndexQuoteItem, MarketCapitalFlowItem, NameHistoryItem, ShareholderChangeItem, StockBasicInfo, StockFinancialStatementItem, StockMoneyFlowItem, StockQuoteItem, TechnicalFactorItem, TradingCalendarItem, TradingSessionItem
+from platform_models import AdjFactorItem, BoardCatalogItem, BoardCategoryItem, BoardMemberHistoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, BSECodeMappingItem, ExpressItem, ForecastItem, IndexCatalogItem, IndexMemberItem, IndexQuoteItem, MarketCapitalFlowItem, NameHistoryItem, ShareholderChangeItem, StockBasicInfo, StockFinancialStatementItem, StockMarginItem, StockMoneyFlowItem, StockQuoteItem, TechnicalFactorItem, TradingCalendarItem, TradingSessionItem
 from quotemux.infra.common import INTRADAY_RULES, aggregate_ohlc, add_quote_metrics, build_time_bounds, format_date_value, format_datetime_value, index_code_to_ts, normalize_index_code, normalize_stock_code, stock_code_to_ts
 from .rate_limit import call_tushare_api
 
@@ -44,18 +45,29 @@ TS_FREQ_MAP = {
 TS_INDEX_MARKETS = ("CSI", "SSE", "SZSE", "SW", "CICC", "OTH")
 TS_STOCK_LIST_STATUS = ("L", "D", "P")
 _PRO_BAR_TOKEN_LOCK = threading.Lock()
+DEFAULT_TUSHARE_REQUEST_TIMEOUT_SECONDS = 10.0
+
+
+def _tushare_request_timeout_seconds() -> float:
+    try:
+        value = float(get_provider_config_value("timeout_seconds"))
+    except ValueError:
+        return DEFAULT_TUSHARE_REQUEST_TIMEOUT_SECONDS
+    if not math.isfinite(value) or value < 1.0:
+        return DEFAULT_TUSHARE_REQUEST_TIMEOUT_SECONDS
+    return value
 
 
 @lru_cache(maxsize=16)
-def _build_ts_pro(api_key: str):
-    return ts.pro_api(api_key)
+def _build_ts_pro(api_key: str, timeout_seconds: float):
+    return ts.pro_api(api_key, timeout=timeout_seconds)
 
 
 def get_ts_pro():
     api_key = get_provider_api_key()
     if ts is None or api_key == "":
         return None
-    return _build_ts_pro(api_key)
+    return _build_ts_pro(api_key, _tushare_request_timeout_seconds())
 
 
 def _normalize_index_market(market: str) -> str:
@@ -295,8 +307,14 @@ def get_adj_factors(code: str, start_date: str, end_date: str, base_date: str) -
     ts_code = stock_code_to_ts(code)
     if pro is None or ts_code == "":
         return []
+    start_value = format_date_value(start_date)
+    end_value = format_date_value(end_date)
+    if start_value == "" or end_value == "":
+        return []
+    expanded_start = (datetime.strptime(start_value, "%Y-%m-%d") - timedelta(days=10)).strftime("%Y%m%d")
+    expanded_end = (datetime.strptime(end_value, "%Y-%m-%d") + timedelta(days=10)).strftime("%Y%m%d")
     try:
-        df = call_tushare_api("adj_factor", pro.adj_factor, ts_code=ts_code, start_date=_to_tushare_date(start_date), end_date=_to_tushare_date(end_date))
+        df = call_tushare_api("adj_factor", pro.adj_factor, ts_code=ts_code, start_date=expanded_start, end_date=expanded_end)
     except Exception:
         return []
     if df is None or df.empty:
@@ -305,6 +323,60 @@ def get_adj_factors(code: str, start_date: str, end_date: str, base_date: str) -
     for column in ["trade_date", "adj_factor"]:
         if column not in work.columns:
             work[column] = None
+    work["trade_date"] = work["trade_date"].map(format_date_value)
+    work["adj_factor"] = pd.to_numeric(work["adj_factor"], errors="coerce")
+    work = work.dropna(subset=["adj_factor"]).drop_duplicates(subset=["trade_date"], keep="last").sort_values("trade_date")
+    try:
+        daily = call_tushare_api(
+            "daily",
+            pro.daily,
+            ts_code=ts_code,
+            start_date=_to_tushare_date(start_value),
+            end_date=_to_tushare_date(end_value),
+            fields="trade_date",
+        )
+    except Exception:
+        daily = pd.DataFrame()
+    requested_dates = []
+    if daily is not None and not daily.empty and "trade_date" in daily.columns:
+        requested_dates = sorted({format_date_value(value) for value in daily["trade_date"] if format_date_value(value) != ""})
+    if requested_dates == []:
+        try:
+            bak_daily = call_tushare_api(
+                "bak_daily",
+                pro.bak_daily,
+                ts_code=ts_code,
+                start_date=_to_tushare_date(start_value),
+                end_date=_to_tushare_date(end_value),
+                fields="trade_date",
+            )
+        except Exception:
+            bak_daily = pd.DataFrame()
+        if bak_daily is not None and not bak_daily.empty and "trade_date" in bak_daily.columns:
+            requested_dates = sorted(
+                {format_date_value(value) for value in bak_daily["trade_date"] if format_date_value(value) != ""}
+            )
+    if requested_dates:
+        factor_by_date = dict(zip(work["trade_date"], work["adj_factor"]))
+        factor_dates = list(work["trade_date"])
+        for trade_date in requested_dates:
+            if trade_date in factor_by_date:
+                continue
+            previous_dates = [value for value in factor_dates if value < trade_date]
+            next_dates = [value for value in factor_dates if value > trade_date]
+            if previous_dates == [] or next_dates == []:
+                continue
+            previous_factor = factor_by_date[previous_dates[-1]]
+            next_factor = factor_by_date[next_dates[0]]
+            if previous_factor == next_factor:
+                factor_by_date[trade_date] = previous_factor
+        work = pd.DataFrame(
+            [
+                {"trade_date": trade_date, "adj_factor": factor_by_date[trade_date]}
+                for trade_date in sorted(factor_by_date)
+            ]
+        )
+    work = work[(work["trade_date"] >= start_value) & (work["trade_date"] <= end_value)]
     normalized = normalize_stock_code(code)
     items: list[AdjFactorItem] = []
     for _, row in work.sort_values("trade_date").iterrows():
@@ -548,6 +620,74 @@ def get_board_member_history(board_code: str, start_date: str, end_date: str) ->
             baseline_date = "19000101"
             if (start_text == "" or baseline_date >= start_text) and (end_text == "" or baseline_date <= end_text):
                 items.append(BoardMemberHistoryItem(board_code=str(row["board_code"]), code=str(row["code"]), name=str(row["name"]), effective_date=format_date_value(baseline_date), action="add"))
+    return sorted(items, key=lambda item: (item.effective_date, item.code, item.action))
+
+
+def get_industry_catalog(level: str, source: str, limit: int, offset: int) -> list[BoardCatalogItem]:
+    pro = get_ts_pro()
+    if pro is None:
+        return []
+    source_text = source.strip().upper() or "SW2021"
+    try:
+        frame = call_tushare_api("index_classify", pro.index_classify, src=source_text)
+    except Exception:
+        return []
+    if frame is None or frame.empty:
+        return []
+    work = frame.copy()
+    for column in ["index_code", "industry_name", "level", "is_pub"]:
+        if column not in work.columns:
+            work[column] = ""
+    level_text = level.strip().upper()
+    if level_text != "":
+        work = work[work["level"].fillna("").astype(str).str.upper() == level_text]
+    work = work[work["is_pub"].fillna("").astype(str) != "0"]
+    work = work.drop_duplicates("index_code").sort_values("index_code").iloc[offset : offset + limit]
+    items: list[BoardCatalogItem] = []
+    for _, row in work.iterrows():
+        index_code = str(row["index_code"]).strip()
+        if index_code == "":
+            continue
+        items.append(
+            BoardCatalogItem(
+                board_code=index_code.split(".", 1)[0],
+                board_name=str(row["industry_name"] or ""),
+                category=f"industry_{source_text.lower()}_{str(row['level']).lower()}",
+                market="a_share",
+                status="active",
+            )
+        )
+    return items
+
+
+def get_industry_member_history(board_code: str, start_date: str, end_date: str) -> list[BoardMemberHistoryItem]:
+    pro = get_ts_pro()
+    normalized_code = str(board_code).strip().upper().split(".", 1)[0]
+    if pro is None or normalized_code == "":
+        return []
+    try:
+        frame = call_tushare_api("index_member", pro.index_member, index_code=f"{normalized_code}.SI")
+    except Exception:
+        return []
+    if frame is None or frame.empty:
+        return []
+    start_text = _to_tushare_date(start_date)
+    end_text = _to_tushare_date(end_date)
+    items: list[BoardMemberHistoryItem] = []
+    for _, row in frame.iterrows():
+        code = normalize_stock_code(str(row.get("con_code", "")))
+        in_date = format_date_value(row.get("in_date"))
+        out_date = format_date_value(row.get("out_date"))
+        if code == "":
+            continue
+        overlaps_window = (end_text == "" or in_date == "" or in_date <= end_text) and (out_date == "" or start_text == "" or out_date >= start_text)
+        if not overlaps_window:
+            continue
+        baseline_date = start_text if start_text != "" and (in_date == "" or in_date < start_text) else in_date
+        if baseline_date != "":
+            items.append(BoardMemberHistoryItem(board_code=normalized_code, code=code, name="", effective_date=format_date_value(baseline_date), action="add"))
+        if out_date != "" and (start_text == "" or out_date >= start_text) and (end_text == "" or out_date <= end_text):
+            items.append(BoardMemberHistoryItem(board_code=normalized_code, code=code, name="", effective_date=format_date_value(out_date), action="remove"))
     return sorted(items, key=lambda item: (item.effective_date, item.code, item.action))
 
 
@@ -1287,6 +1427,162 @@ def get_stock_money_flow_batch(codes: str, trade_date: str, view: str) -> list[S
     for code in unique_codes:
         items.extend(get_stock_money_flow(code, actual_trade_date, "", "", view))
     return sorted(items, key=lambda item: (item.code, item.trade_date, item.view))
+
+
+def get_stock_money_flow_snapshot(trade_date: str, view: str) -> list[StockMoneyFlowItem]:
+    actual_trade_date = format_date_value(trade_date)
+    if actual_trade_date == "":
+        return []
+    cache_path = build_cache_path(
+        "tushare",
+        ["stocks", "indicators", "money-flow-snapshot"],
+        {"trade_date": actual_trade_date, "view": view},
+    )
+    cache_df = read_cache_frame(cache_path)
+    if cache_df.empty:
+        cache_df = _fetch_money_flow_daily_frame(actual_trade_date, view)
+        if not cache_df.empty:
+            write_cache_frame(cache_path, cache_df)
+    if cache_df.empty:
+        return []
+    return _money_flow_items_from_frame(cache_df)
+
+
+def _margin_items_from_frame(frame: pd.DataFrame) -> list[StockMarginItem]:
+    if frame.empty or "ts_code" not in frame.columns or "trade_date" not in frame.columns:
+        return []
+    items: list[StockMarginItem] = []
+    for _, row in frame.iterrows():
+        code = normalize_stock_code(str(row["ts_code"]))
+        if code == "":
+            continue
+        items.append(
+            StockMarginItem(
+                code=code,
+                trade_date=format_date_value(row["trade_date"]),
+                financing_balance=float(row["rzye"]) if "rzye" in row and pd.notna(row["rzye"]) else None,
+                financing_buy=float(row["rzmre"]) if "rzmre" in row and pd.notna(row["rzmre"]) else None,
+                financing_repay=float(row["rzche"]) if "rzche" in row and pd.notna(row["rzche"]) else None,
+                securities_lending_balance=float(row["rqye"]) if "rqye" in row and pd.notna(row["rqye"]) else None,
+                securities_lending_volume=float(row["rqyl"]) if "rqyl" in row and pd.notna(row["rqyl"]) else None,
+                securities_lending_repay=float(row["rqchl"]) if "rqchl" in row and pd.notna(row["rqchl"]) else None,
+                securities_lending_sell=float(row["rqmcl"]) if "rqmcl" in row and pd.notna(row["rqmcl"]) else None,
+                total_margin_balance=float(row["rzrqye"]) if "rzrqye" in row and pd.notna(row["rzrqye"]) else None,
+            )
+        )
+    return sorted(items, key=lambda item: (item.code, item.trade_date))
+
+
+def get_stock_margin_snapshot(trade_date: str) -> list[StockMarginItem]:
+    actual_trade_date = format_date_value(trade_date)
+    if actual_trade_date == "":
+        return []
+    cache_path = build_cache_path("tushare", ["stocks", "indicators", "margin-snapshot"], {"trade_date": actual_trade_date})
+    cache_df = read_cache_frame(cache_path)
+    if cache_df.empty:
+        pro = get_ts_pro()
+        if pro is None:
+            return []
+        try:
+            cache_df = call_tushare_api("margin_detail", pro.margin_detail, trade_date=actual_trade_date.replace("-", ""))
+        except Exception:
+            return []
+        if cache_df is None or cache_df.empty:
+            return []
+        write_cache_frame(cache_path, cache_df)
+    return _margin_items_from_frame(cache_df)
+
+
+def _express_items_from_snapshot_frame(frame: pd.DataFrame) -> list[ExpressItem]:
+    if frame.empty or "ts_code" not in frame.columns:
+        return []
+    items: list[ExpressItem] = []
+    for _, row in frame.iterrows():
+        code = normalize_stock_code(str(row["ts_code"]))
+        report_period = format_date_value(row["end_date"]) if "end_date" in row else ""
+        announce_date = format_date_value(row["ann_date"]) if "ann_date" in row else ""
+        if code == "" or report_period == "" or announce_date == "":
+            continue
+        items.append(
+            ExpressItem(
+                code=code,
+                report_period=report_period,
+                announce_date=announce_date,
+                revenue=float(row["revenue"]) if "revenue" in row and pd.notna(row["revenue"]) else None,
+                operating_profit=float(row["operate_profit"]) if "operate_profit" in row and pd.notna(row["operate_profit"]) else None,
+                total_profit=float(row["total_profit"]) if "total_profit" in row and pd.notna(row["total_profit"]) else None,
+                net_profit=float(row["n_income"]) if "n_income" in row and pd.notna(row["n_income"]) else None,
+                eps=float(row["diluted_eps"]) if "diluted_eps" in row and pd.notna(row["diluted_eps"]) else None,
+                roe=float(row["diluted_roe"]) if "diluted_roe" in row and pd.notna(row["diluted_roe"]) else None,
+            )
+        )
+    return sorted(items, key=lambda item: (item.announce_date, item.code, item.report_period))
+
+
+def get_stock_express_snapshot(announce_date: str) -> list[ExpressItem]:
+    actual_announce_date = format_date_value(announce_date)
+    if actual_announce_date == "":
+        return []
+    cache_path = build_cache_path("tushare", ["stocks", "finance", "express-snapshot"], {"announce_date": actual_announce_date})
+    cache_df = read_cache_frame(cache_path)
+    if cache_df.empty:
+        pro = get_ts_pro()
+        if pro is None:
+            return []
+        try:
+            cache_df = call_tushare_api("express", pro.express, start_date=actual_announce_date.replace("-", ""), end_date=actual_announce_date.replace("-", ""))
+        except Exception:
+            return []
+        if cache_df is None or cache_df.empty:
+            return []
+        write_cache_frame(cache_path, cache_df)
+    return _express_items_from_snapshot_frame(cache_df)
+
+
+def _forecast_items_from_snapshot_frame(frame: pd.DataFrame) -> list[ForecastItem]:
+    if frame.empty or "ts_code" not in frame.columns:
+        return []
+    items: list[ForecastItem] = []
+    for _, row in frame.iterrows():
+        code = normalize_stock_code(str(row["ts_code"]))
+        report_period = format_date_value(row["end_date"]) if "end_date" in row else ""
+        announce_date = format_date_value(row["ann_date"]) if "ann_date" in row else ""
+        if code == "" or report_period == "" or announce_date == "":
+            continue
+        items.append(
+            ForecastItem(
+                code=code,
+                report_period=report_period,
+                announce_date=announce_date,
+                forecast_type=str(row["type"]) if "type" in row and pd.notna(row["type"]) else "",
+                forecast_summary=str(row["summary"]) if "summary" in row and pd.notna(row["summary"]) else "",
+                net_profit_min=float(row["net_profit_min"]) if "net_profit_min" in row and pd.notna(row["net_profit_min"]) else None,
+                net_profit_max=float(row["net_profit_max"]) if "net_profit_max" in row and pd.notna(row["net_profit_max"]) else None,
+                pct_chg_min=float(row["p_change_min"]) if "p_change_min" in row and pd.notna(row["p_change_min"]) else None,
+                pct_chg_max=float(row["p_change_max"]) if "p_change_max" in row and pd.notna(row["p_change_max"]) else None,
+            )
+        )
+    return sorted(items, key=lambda item: (item.announce_date, item.code, item.report_period, item.forecast_type))
+
+
+def get_stock_forecast_snapshot(announce_date: str) -> list[ForecastItem]:
+    actual_announce_date = format_date_value(announce_date)
+    if actual_announce_date == "":
+        return []
+    cache_path = build_cache_path("tushare", ["stocks", "finance", "forecast-snapshot"], {"announce_date": actual_announce_date})
+    cache_df = read_cache_frame(cache_path)
+    if cache_df.empty:
+        pro = get_ts_pro()
+        if pro is None:
+            return []
+        try:
+            cache_df = call_tushare_api("forecast", pro.forecast, ann_date=actual_announce_date.replace("-", ""))
+        except Exception:
+            return []
+        if cache_df is None or cache_df.empty:
+            return []
+        write_cache_frame(cache_path, cache_df)
+    return _forecast_items_from_snapshot_frame(cache_df)
 
 
 def _first_existing_column(frame: pd.DataFrame, column_names: tuple[str, ...]) -> object:

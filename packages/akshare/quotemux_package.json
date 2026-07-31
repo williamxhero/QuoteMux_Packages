@@ -286,11 +286,25 @@
       "notes": "东方财富机构调研明细"
     },
     {
+      "capability_id": "stocks.factors.adj",
+      "support_level": "partial",
+      "handler_name": "get_adj_factors",
+      "mergeable": true,
+      "notes": "使用 AKShare B 股日线与后复权因子生成逐交易日复权因子"
+    },
+    {
       "capability_id": "stocks.quotes.daily",
       "support_level": "native",
       "handler_name": "get_stock_quotes",
       "mergeable": true,
       "notes": ""
+    },
+    {
+      "capability_id": "funds.etf.quotes.daily",
+      "support_level": "native",
+      "handler_name": "get_etf_daily_quotes",
+      "mergeable": true,
+      "notes": "东方财富场内 ETF 未复权日线"
     },
     {
       "capability_id": "stocks.quotes.daily_snapshot",
@@ -338,6 +352,7 @@
   "secret_fields": [],
   "supports_multi_instance": true,
   "handler_targets": {
+    "get_adj_factors": "quotemux_packages.akshare.source:get_adj_factors",
     "get_concept_catalog": "quotemux_packages.akshare.source:get_concept_catalog",
     "get_concept_categories": "quotemux_packages.akshare.source:get_concept_categories",
     "get_concept_daily_money_flow_snapshot": "quotemux_packages.akshare.source:get_concept_daily_money_flow_snapshot",
@@ -354,6 +369,7 @@
     "get_dragon_tiger": "quotemux_packages.akshare.source:get_dragon_tiger",
     "get_dragon_tiger_institutions": "quotemux_packages.akshare.source:get_dragon_tiger_institutions",
     "get_express": "quotemux_packages.akshare.source:get_express",
+    "get_etf_daily_quotes": "quotemux_packages.akshare.etfs:get_etf_daily_quotes",
     "get_forecasts": "quotemux_packages.akshare.source:get_forecasts",
     "get_hk_connect_holdings": "quotemux_packages.akshare.source:get_hk_connect_holdings",
     "get_hot_money_details": "quotemux_packages.akshare.source:get_hot_money_details",

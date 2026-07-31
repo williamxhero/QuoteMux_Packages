@@ -62,6 +62,13 @@
       "notes": ""
     },
     {
+      "capability_id": "funds.etf.quotes.daily",
+      "support_level": "native",
+      "handler_name": "get_etf_daily_quotes",
+      "mergeable": true,
+      "notes": "东方财富场内 ETF 未复权日线"
+    },
+    {
       "capability_id": "stocks.quotes.daily_snapshot",
       "support_level": "partial",
       "handler_name": "get_stock_daily_snapshot_full",
@@ -95,6 +102,7 @@
   "handler_targets": {
     "get_concept_quotes": "quotemux_packages.efinance.source:get_concept_quotes",
     "get_dragon_tiger": "quotemux_packages.efinance.source:get_dragon_tiger",
+    "get_etf_daily_quotes": "quotemux_packages.efinance.etfs:get_etf_daily_quotes",
     "get_express": "quotemux_packages.efinance.source:get_express",
     "get_index_members": "quotemux_packages.efinance.source:get_index_members",
     "get_index_quotes": "quotemux_packages.efinance.source:get_index_quotes",
