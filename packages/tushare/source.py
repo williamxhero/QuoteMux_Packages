@@ -213,6 +213,7 @@ def get_stock_catalog(codes: list[str], name: str, exchange: str, list_status: s
     work = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["code"], keep="last")
     # 北交所改号后目录只保留新代码；以 Tushare 改号表补充旧代码终止记录。
     work = _apply_bse_code_mappings(work, get_bse_code_mappings("", "", "active"))
+    work = work.drop_duplicates(subset=["code"], keep="last")
     normalized_codes = [normalize_stock_code(code) for code in codes if normalize_stock_code(code)]
     if normalized_codes:
         work = work[work["code"].isin(normalized_codes)]
@@ -893,6 +894,7 @@ def get_index_catalog(index_code: str, category: str, market: str, publisher: st
 from .market_topics import get_block_trades, get_connect_active_top10, get_connect_capital_flow, get_connect_quotas, get_dragon_tiger, get_dragon_tiger_institutions, get_hot_money_details, get_hot_money_profiles, get_market_open_auctions
 from .stock_chips import get_chip_distribution, get_chip_performance
 from .stock_finance import get_audits, get_disclosure_dates, get_dividends, get_express, get_forecasts, get_main_business, get_repurchases, get_rights_issues, get_share_changes, get_unlock_schedules
+from .stock_financial_pit import get_stock_financial_pit_period
 from .stock_ownership import get_ccass_holding_details, get_ccass_holdings, get_hk_connect_holdings, get_pledge_details, get_pledge_stats, get_shareholder_count, get_shareholder_top10
 from .stocks import get_auctions, get_bse_code_mappings, get_company_profile, get_hk_connect_targets, get_management_rewards, get_managers, get_nine_turn, get_premarket, get_rank_broker_monthly_picks, get_rank_research_reports, get_research_reports, get_stock_ah_comparisons, get_stock_archive, get_stock_daily_basic, get_stock_daily_market_value, get_stock_daily_valuation, get_stock_finance_indicators, get_stock_risk_flags, get_surveys
 
@@ -1090,7 +1092,9 @@ def _fetch_stock_quotes_frame(code: str, freq: str, start_dt: datetime | None, e
     work["trade_time"] = pd.to_datetime(work[time_column])
     work["freq"] = freq
     work["adjust"] = adjust
-    work["volume2"] = work[volume_column] if volume_column in work.columns else None
+    work["volume2"] = pd.to_numeric(work[volume_column], errors="coerce") if volume_column in work.columns else None
+    if freq in {"1d", "1w", "1mo"}:
+        work["volume2"] = work["volume2"] * 100
     if "amount" in work.columns:
         work["amount"] = pd.to_numeric(work["amount"], errors="coerce") * 1000
     work["is_suspended"] = False
@@ -1115,7 +1119,7 @@ def _fetch_stock_daily_snapshot_frame(trade_date: str) -> pd.DataFrame:
     work["trade_time"] = pd.to_datetime(work["trade_date"])
     work["freq"] = "1d"
     work["adjust"] = "none"
-    work["volume2"] = pd.to_numeric(work["vol"], errors="coerce") if "vol" in work.columns else None
+    work["volume2"] = pd.to_numeric(work["vol"], errors="coerce") * 100 if "vol" in work.columns else None
     for column in ["open", "high", "low", "close", "pre_close", "change", "pct_chg", "amount"]:
         if column not in work.columns:
             work[column] = None
@@ -1321,10 +1325,14 @@ def _fetch_money_flow_frame(code: str, start_value: str, end_value: str, view: s
     work = df.copy()
     work["code"] = normalize_stock_code(code)
     work["view"] = view
+    for column_name in ("buy_sm_amount", "buy_md_amount", "buy_lg_amount", "buy_elg_amount"):
+        if column_name not in work.columns:
+            work[column_name] = 0
     work["main_inflow"] = _amount_wan_to_yuan(work["buy_lg_amount"].fillna(0) + work["buy_elg_amount"].fillna(0))
     work["main_outflow"] = _amount_wan_to_yuan(work["sell_lg_amount"].fillna(0) + work["sell_elg_amount"].fillna(0))
     work["net_inflow"] = _amount_wan_to_yuan(work["net_mf_amount"])
-    return work[["code", "trade_date", "view", "main_inflow", "main_outflow", "net_inflow"]]
+    work["active_buy_amount"] = _amount_wan_to_yuan(sum(work[column_name].fillna(0) for column_name in ("buy_sm_amount", "buy_md_amount", "buy_lg_amount", "buy_elg_amount")))
+    return work[["code", "trade_date", "view", "main_inflow", "main_outflow", "net_inflow", "active_buy_amount"]]
 
 
 def _money_flow_frame_from_raw(frame: pd.DataFrame, view: str) -> pd.DataFrame:
@@ -1337,13 +1345,14 @@ def _money_flow_frame_from_raw(frame: pd.DataFrame, view: str) -> pd.DataFrame:
     work["code"] = work[code_column].map(normalize_stock_code)
     work["trade_date"] = work["trade_date"].map(format_date_value)
     work["view"] = view
-    for column_name in ("buy_lg_amount", "buy_elg_amount", "sell_lg_amount", "sell_elg_amount", "net_mf_amount"):
+    for column_name in ("buy_sm_amount", "buy_md_amount", "buy_lg_amount", "buy_elg_amount", "sell_lg_amount", "sell_elg_amount", "net_mf_amount"):
         if column_name not in work.columns:
             work[column_name] = 0
     work["main_inflow"] = _amount_wan_to_yuan(work["buy_lg_amount"].fillna(0) + work["buy_elg_amount"].fillna(0))
     work["main_outflow"] = _amount_wan_to_yuan(work["sell_lg_amount"].fillna(0) + work["sell_elg_amount"].fillna(0))
     work["net_inflow"] = _amount_wan_to_yuan(work["net_mf_amount"])
-    return work[["code", "trade_date", "view", "main_inflow", "main_outflow", "net_inflow"]]
+    work["active_buy_amount"] = _amount_wan_to_yuan(sum(work[column_name].fillna(0) for column_name in ("buy_sm_amount", "buy_md_amount", "buy_lg_amount", "buy_elg_amount")))
+    return work[["code", "trade_date", "view", "main_inflow", "main_outflow", "net_inflow", "active_buy_amount"]]
 
 
 def _fetch_money_flow_daily_frame(trade_date: str, view: str) -> pd.DataFrame:
@@ -1369,6 +1378,7 @@ def _money_flow_items_from_frame(frame: pd.DataFrame) -> list[StockMoneyFlowItem
                 main_inflow=float(row["main_inflow"]) if pd.notna(row["main_inflow"]) else None,
                 main_outflow=float(row["main_outflow"]) if pd.notna(row["main_outflow"]) else None,
                 net_inflow=float(row["net_inflow"]) if pd.notna(row["net_inflow"]) else None,
+                active_buy_amount=float(row["active_buy_amount"]) if "active_buy_amount" in row and pd.notna(row["active_buy_amount"]) else None,
             )
         )
     return items
@@ -1439,13 +1449,21 @@ def get_stock_money_flow_snapshot(trade_date: str, view: str) -> list[StockMoney
         {"trade_date": actual_trade_date, "view": view},
     )
     cache_df = read_cache_frame(cache_path)
-    if cache_df.empty:
+    if _money_flow_snapshot_cache_needs_fetch(cache_df, actual_trade_date):
         cache_df = _fetch_money_flow_daily_frame(actual_trade_date, view)
         if not cache_df.empty:
             write_cache_frame(cache_path, cache_df)
     if cache_df.empty:
         return []
     return _money_flow_items_from_frame(cache_df)
+
+
+def _money_flow_snapshot_cache_needs_fetch(frame: pd.DataFrame, trade_date: str) -> bool:
+    required_columns = {"code", "trade_date", "view", "active_buy_amount"}
+    if frame.empty or not required_columns.issubset(frame.columns):
+        return True
+    snapshot = frame[frame["trade_date"].map(format_date_value) == trade_date]
+    return snapshot.empty or snapshot["active_buy_amount"].isna().all()
 
 
 def _margin_items_from_frame(frame: pd.DataFrame) -> list[StockMarginItem]:

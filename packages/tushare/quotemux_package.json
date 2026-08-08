@@ -377,6 +377,13 @@
       "notes": ""
     },
     {
+      "capability_id": "stocks.finance.pit.raw.period",
+      "support_level": "native",
+      "handler_name": "get_stock_financial_pit_period",
+      "mergeable": false,
+      "notes": "保留 Tushare fina_indicator_vip/income_vip 的公告日、实际公告日、报告期、报告版本及原始值；不直接宣称 BigQuant 组合因子等价。"
+    },
+    {
       "capability_id": "stocks.indicators.money_flow.snapshot",
       "support_level": "native",
       "handler_name": "get_stock_money_flow_snapshot",
@@ -668,6 +675,7 @@
     "get_stock_daily_valuation": "quotemux_packages.tushare.source:get_stock_daily_valuation",
     "get_stock_financial_statements": "quotemux_packages.tushare.source:get_stock_financial_statements",
     "get_stock_finance_indicators": "quotemux_packages.tushare.source:get_stock_finance_indicators",
+    "get_stock_financial_pit_period": "quotemux_packages.tushare.source:get_stock_financial_pit_period",
     "get_stock_money_flow": "quotemux_packages.tushare.source:get_stock_money_flow",
     "get_stock_money_flow_batch": "quotemux_packages.tushare.source:get_stock_money_flow_batch",
     "get_stock_money_flow_snapshot": "quotemux_packages.tushare.source:get_stock_money_flow_snapshot",

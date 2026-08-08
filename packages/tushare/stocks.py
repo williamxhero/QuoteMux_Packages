@@ -171,10 +171,10 @@ def _fetch_daily_basic_frame(code: str, start_value: str, end_value: str) -> pd.
     work = df.copy()
     work["code"] = normalize_stock_code(code)
     work["trade_date"] = work["trade_date"].map(format_date_value)
-    for column in ("turnover_rate", "volume_ratio", "pe", "pb", "ps", "pcf", "dv_ratio", "total_share", "float_share", "total_mv", "circ_mv"):
+    for column in ("turnover_rate", "volume_ratio", "pe", "pb", "ps", "pcf", "dv_ratio", "dv_ttm", "total_share", "float_share", "free_share", "total_mv", "circ_mv"):
         if column not in work.columns:
             work[column] = None
-    return work[["code", "trade_date", "turnover_rate", "volume_ratio", "pe", "pb", "ps", "pcf", "dv_ratio", "total_share", "float_share", "total_mv", "circ_mv"]]
+    return work[["code", "trade_date", "turnover_rate", "volume_ratio", "pe", "pb", "ps", "pcf", "dv_ratio", "dv_ttm", "total_share", "float_share", "free_share", "total_mv", "circ_mv"]]
 
 
 def _fetch_daily_basic_market_frame(start_value: str, end_value: str) -> pd.DataFrame:
@@ -186,10 +186,10 @@ def _fetch_daily_basic_market_frame(start_value: str, end_value: str) -> pd.Data
     work = df.copy()
     work["code"] = work["ts_code"].astype(str).str.split(".").str[0]
     work["trade_date"] = work["trade_date"].map(format_date_value)
-    for column in ("turnover_rate", "volume_ratio", "pe", "pb", "ps", "pcf", "dv_ratio", "total_share", "float_share", "total_mv", "circ_mv"):
+    for column in ("turnover_rate", "volume_ratio", "pe", "pb", "ps", "pcf", "dv_ratio", "dv_ttm", "total_share", "float_share", "free_share", "total_mv", "circ_mv"):
         if column not in work.columns:
             work[column] = None
-    return work[["code", "trade_date", "turnover_rate", "volume_ratio", "pe", "pb", "ps", "pcf", "dv_ratio", "total_share", "float_share", "total_mv", "circ_mv"]]
+    return work[["code", "trade_date", "turnover_rate", "volume_ratio", "pe", "pb", "ps", "pcf", "dv_ratio", "dv_ttm", "total_share", "float_share", "free_share", "total_mv", "circ_mv"]]
 
 
 def _build_daily_frames(code: str, trade_date: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -212,7 +212,7 @@ def _build_daily_market_frames(trade_date: str) -> pd.DataFrame:
         cache_path = build_cache_path("tushare", ["stocks", "indicators", "daily-basic", "market"], {"trade_date": actual_start.replace("-", "")})
         cache_df = read_cache_frame(cache_path)
         filtered_df = filter_frame_by_date_range(cache_df, "trade_date", actual_start, actual_end)
-        if not filtered_df.empty:
+        if not _daily_market_cache_needs_fetch(filtered_df):
             return cache_df
         fetched_df = _fetch_daily_basic_market_frame(actual_start, actual_end)
         if fetched_df.empty:
@@ -220,6 +220,21 @@ def _build_daily_market_frames(trade_date: str) -> pd.DataFrame:
         merged_df = merge_cache_frame(cache_df, fetched_df, ["code", "trade_date"], ["trade_date", "code"])
         write_cache_frame(cache_path, merged_df)
         return merged_df
+
+
+def _daily_market_cache_needs_fetch(frame: pd.DataFrame) -> bool:
+    required_columns = {
+        "code",
+        "trade_date",
+        "float_share",
+        "free_share",
+        "circ_mv",
+        "dv_ratio",
+        "dv_ttm",
+    }
+    if frame.empty or not required_columns.issubset(frame.columns):
+        return True
+    return any(frame[column].isna().all() for column in ("float_share", "free_share", "circ_mv", "dv_ratio", "dv_ttm"))
 
 
 def get_stock_daily_basic(code: str, codes: str, trade_date: str, start_date: str, end_date: str) -> list[StockDailyBasicItem]:
@@ -245,6 +260,7 @@ def get_stock_daily_basic(code: str, codes: str, trade_date: str, start_date: st
                     pb=float(row["pb"]) if pd.notna(row["pb"]) else None,
                     total_share=float(row["total_share"]) if pd.notna(row["total_share"]) else None,
                     float_share=float(row["float_share"]) if pd.notna(row["float_share"]) else None,
+                    free_share=float(row["free_share"]) if pd.notna(row["free_share"]) else None,
                 )
             )
         return items
@@ -265,6 +281,7 @@ def get_stock_daily_basic(code: str, codes: str, trade_date: str, start_date: st
                     pb=float(row["pb"]) if pd.notna(row["pb"]) else None,
                     total_share=float(row["total_share"]) if pd.notna(row["total_share"]) else None,
                     float_share=float(row["float_share"]) if pd.notna(row["float_share"]) else None,
+                    free_share=float(row["free_share"]) if pd.notna(row["free_share"]) else None,
                 )
             )
     return items
@@ -292,6 +309,7 @@ def get_stock_daily_valuation(code: str, codes: str, trade_date: str, start_date
                     ps=float(row["ps"]) if pd.notna(row["ps"]) else None,
                     pcf=float(row["pcf"]) if pd.notna(row["pcf"]) else None,
                     dv_ratio=float(row["dv_ratio"]) if pd.notna(row["dv_ratio"]) else None,
+                    dv_ttm=float(row["dv_ttm"]) if pd.notna(row["dv_ttm"]) else None,
                 )
             )
         return items
@@ -311,6 +329,7 @@ def get_stock_daily_valuation(code: str, codes: str, trade_date: str, start_date
                     ps=float(row["ps"]) if pd.notna(row["ps"]) else None,
                     pcf=float(row["pcf"]) if pd.notna(row["pcf"]) else None,
                     dv_ratio=float(row["dv_ratio"]) if pd.notna(row["dv_ratio"]) else None,
+                    dv_ttm=float(row["dv_ttm"]) if pd.notna(row["dv_ttm"]) else None,
                 )
             )
     return items

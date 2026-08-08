@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from platform_models import BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, HLSignalItem, NineTurnItem, ShareholderChangeItem, ShareholderCountItem, StockQuoteItem, TechnicalFactorItem, TradingCalendarItem
+from platform_models import BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, HLSignalItem, NineTurnItem, ShareholderChangeItem, ShareholderCountItem, StockQuoteItem, StockStrategyFactorItem, TechnicalFactorItem, TradingCalendarItem
 from quotemux.infra.common import normalize_stock_code
 
 
@@ -228,6 +228,200 @@ def get_technical_factors(code: str, trade_date: str, start_date: str, end_date:
         return []
     quote_items = _quote_mux().stocks.get_quotes(_stock_quotes_request(normalized, "1d", trade_date, start_date, end_date, adjust))
     return _build_technical_factor_items(quote_items, adjust)
+
+
+def get_strategy_factor_window(start_date: str, end_date: str, codes: str = "") -> list[StockStrategyFactorItem]:
+    """从本地事实表一次性读取全市场策略因子窗口。"""
+    from quotemux.infra.common import format_date_value
+    from quotemux.infra.db.client import query_dataframe
+
+    actual_start = format_date_value(start_date)
+    actual_end = format_date_value(end_date)
+    if actual_start == "" or actual_end == "" or actual_start > actual_end:
+        raise ValueError("start_date 和 end_date 必须是有效日期，且 start_date 不得晚于 end_date")
+    requested_codes = sorted({normalize_stock_code(item) for item in codes.split(",") if normalize_stock_code(item) != ""})
+    frame = query_dataframe(
+        """
+        with requested_rows as (
+            select day_rows.*
+            from fact.stock_daily_1d day_rows
+            where day_rows.trade_date between %s::date and %s::date
+              and (%s = '' or day_rows.code = any(%s))
+        ),
+        requested_stocks as (
+            select distinct market, code
+            from requested_rows
+        ),
+        seed_rows as (
+            select history_rows.*
+            from requested_stocks stocks
+            cross join lateral (
+                select day_rows.*
+                from fact.stock_daily_1d day_rows
+                where day_rows.market = stocks.market
+                  and day_rows.code = stocks.code
+                  and day_rows.trade_date < %s::date
+                order by day_rows.trade_date desc
+                limit 39
+            ) history_rows
+        ),
+        window_rows as (
+            select * from seed_rows
+            union all
+            select * from requested_rows
+        ),
+        calculated_rows as (
+            select
+                day_rows.*,
+                case when count(day_rows.close) over ma10_window = 10 then avg(day_rows.close) over ma10_window end as ma10,
+                case when count(day_rows.close) over ma20_window = 20 then avg(day_rows.close) over ma20_window end as ma20,
+                case when count(day_rows.close) over ma40_window = 40 then avg(day_rows.close) over ma40_window end as ma40
+                ,case
+                    when day_rows.adj_factor is not null and day_rows.adj_factor <> 0
+                     and count(day_rows.close * day_rows.adj_factor) over ma10_window = 10
+                    then avg(day_rows.close * day_rows.adj_factor) over ma10_window / day_rows.adj_factor
+                end as ma10_qfq
+                ,case
+                    when day_rows.adj_factor is not null and day_rows.adj_factor <> 0
+                     and count(day_rows.close * day_rows.adj_factor) over ma20_window = 20
+                    then avg(day_rows.close * day_rows.adj_factor) over ma20_window / day_rows.adj_factor
+                end as ma20_qfq
+                ,case
+                    when day_rows.adj_factor is not null and day_rows.adj_factor <> 0
+                     and count(day_rows.close * day_rows.adj_factor) over ma40_window = 40
+                    then avg(day_rows.close * day_rows.adj_factor) over ma40_window / day_rows.adj_factor
+                end as ma40_qfq
+                ,case when count(day_rows.volume) over volume5_window = 5 then avg(day_rows.volume) over volume5_window end as mean_volume_5d_shares
+            from window_rows day_rows
+            window
+                ma10_window as (partition by day_rows.market, day_rows.code order by day_rows.trade_date rows between 9 preceding and current row),
+                ma20_window as (partition by day_rows.market, day_rows.code order by day_rows.trade_date rows between 19 preceding and current row),
+                ma40_window as (partition by day_rows.market, day_rows.code order by day_rows.trade_date rows between 39 preceding and current row)
+                ,volume5_window as (partition by day_rows.market, day_rows.code order by day_rows.trade_date rows between 4 preceding and current row)
+        )
+        select
+            day_rows.trade_date::text as trade_date,
+            day_rows.code,
+            coalesce(listing_board.listing_board, '') as listing_board,
+            day_rows.close,
+            indicators.dv_ratio as dividend_yield_pct,
+            indicators.dv_ttm as dividend_yield_ttm_pct,
+            indicators.float_mv as float_market_cap,
+            indicators.float_share as circulating_shares,
+            indicators.free_share as free_float_shares,
+            money_flow.active_buy_amount,
+            case
+                when money_flow.active_buy_amount is null or indicators.float_mv is null or indicators.float_mv = 0 then null
+                else money_flow.active_buy_amount / (indicators.float_mv * 10000.0)
+            end as active_buy_amount_proportion_all,
+            day_rows.volume as volume_shares,
+            day_rows.mean_volume_5d_shares,
+            case
+                when day_rows.mean_volume_5d_shares is null or indicators.free_share is null or indicators.free_share = 0 then null
+                else day_rows.mean_volume_5d_shares / (indicators.free_share * 10000.0)
+            end as mean_volume_5d_to_free_float_shares,
+            day_rows.ma10,
+            day_rows.ma20,
+             day_rows.ma40,
+             day_rows.ma10_qfq,
+             day_rows.ma20_qfq,
+             day_rows.ma40_qfq,
+             coalesce(financial.formula_version, '') as financial_formula_version,
+             coalesce(financial.announcement_date::text, '') as financial_announcement_date,
+             coalesce(financial.report_period::text, '') as financial_report_period,
+             financial.gross_profit_ttm_yoy_pct,
+             financial.total_operating_revenue_ttm_yoy_pct,
+             financial_3y.gross_profit_ttm_yoy_3y_avg_pct,
+             financial_3y.total_operating_revenue_ttm_yoy_3y_avg_pct,
+             financial.ebit_per_share_latest_quarter_cny,
+             financial.attributable_net_profit_per_latest_share_cny,
+             financial.attributable_net_profit_per_latest_share_qoq_pct,
+             financial.deducted_net_profit_ttm_cny,
+             financial.deducted_net_profit_ttm_qoq_pct,
+             financial.ebit_ps_lf_consec_min_3q,
+             financial.basic_eps_latest_capital_lf_qoq_consec_min_3q,
+             financial.net_profit_deducted_ttm_qoq_consec_min_3q,
+            coalesce(day_rows.is_st, false) as is_st,
+            coalesce(day_rows.is_suspended, false) as is_suspended,
+            price_band.upper_limit,
+            price_band.lower_limit,
+            case
+                when day_rows.close is null or price_band.upper_limit is null or price_band.lower_limit is null then ''
+                when abs(day_rows.close - price_band.upper_limit) <= 0.001 then 'upper_limit'
+                when abs(day_rows.close - price_band.lower_limit) <= 0.001 then 'lower_limit'
+                when day_rows.close > price_band.upper_limit or day_rows.close < price_band.lower_limit then 'outside_band'
+                else 'inside_band'
+            end as price_band_state
+        from calculated_rows day_rows
+        left join lateral (
+            select board_rows.listing_board
+            from fact.stock_listing_board_history board_rows
+            where board_rows.market = day_rows.market
+              and board_rows.code = day_rows.code
+              and board_rows.valid_from <= day_rows.trade_date
+              and (board_rows.valid_to is null or board_rows.valid_to >= day_rows.trade_date)
+            order by board_rows.valid_from desc
+            limit 1
+        ) listing_board on true
+        left join fact.stock_market_indicators_daily indicators
+          on indicators.market = day_rows.market
+         and indicators.code = day_rows.code
+         and indicators.trade_date = day_rows.trade_date
+        left join fact.stock_money_flow_daily money_flow
+          on money_flow.market = day_rows.market
+         and money_flow.code = day_rows.code
+         and money_flow.trade_date = day_rows.trade_date
+         left join fact.stock_price_band_daily price_band
+          on price_band.market = day_rows.market
+         and price_band.code = day_rows.code
+          and price_band.trade_date = day_rows.trade_date
+         left join lateral (
+             select financial_rows.*
+             from fact.stock_financial_pit_factor financial_rows
+             where financial_rows.market = day_rows.market
+               and financial_rows.code = day_rows.code
+               and financial_rows.announcement_date <= day_rows.trade_date
+             order by financial_rows.announcement_date desc, financial_rows.report_period desc
+             limit 1
+         ) financial on true
+         left join lateral (
+             select
+                 case when count(recent.gross_profit_ttm_yoy_pct) >= 8
+                      then avg(recent.gross_profit_ttm_yoy_pct) end as gross_profit_ttm_yoy_3y_avg_pct,
+                 case when count(recent.total_operating_revenue_ttm_yoy_pct) >= 8
+                      then avg(recent.total_operating_revenue_ttm_yoy_pct) end as total_operating_revenue_ttm_yoy_3y_avg_pct
+             from (
+                 select distinct_period.gross_profit_ttm_yoy_pct,
+                        distinct_period.total_operating_revenue_ttm_yoy_pct
+                 from (
+                     select distinct on (financial_rows.report_period)
+                         financial_rows.report_period,
+                         financial_rows.announcement_date,
+                         financial_rows.gross_profit_ttm_yoy_pct,
+                         financial_rows.total_operating_revenue_ttm_yoy_pct
+                     from fact.stock_financial_pit_factor financial_rows
+                     where financial_rows.market = day_rows.market
+                       and financial_rows.code = day_rows.code
+                       and financial_rows.announcement_date <= day_rows.trade_date
+                     order by financial_rows.report_period desc, financial_rows.announcement_date desc
+                 ) distinct_period
+                 order by distinct_period.report_period desc
+                 limit 12
+             ) recent
+         ) financial_3y on true
+        where day_rows.trade_date between %s::date and %s::date
+        order by day_rows.trade_date, day_rows.code
+        """,
+        (actual_start, actual_end, ",".join(requested_codes), requested_codes, actual_start, actual_start, actual_end),
+    )
+    if frame.empty:
+        return []
+    records = frame.astype(object).where(pd.notna(frame), None).to_dict("records")
+    for row in records:
+        row["financial_formula_version"] = str(row.get("financial_formula_version") or "")
+        row["financial_announcement_date"] = str(row.get("financial_announcement_date") or "")
+        row["financial_report_period"] = str(row.get("financial_report_period") or "")
+    return [StockStrategyFactorItem(**row) for row in records]
 
 
 def get_shareholder_changes(code: str, trade_date: str, start_date: str, end_date: str) -> list[ShareholderChangeItem]:

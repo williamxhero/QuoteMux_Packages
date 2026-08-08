@@ -1,6 +1,6 @@
 {
   "package_id": "derived_core",
-  "version": "2026.5.15",
+  "version": "2026.8.5",
   "source_name": "derived_core",
   "display_name": "Derived Core",
   "description": "通过 QuoteMux 基础 API 派生数据的内置聚合源。",
@@ -11,6 +11,13 @@
       "handler_name": "get_technical_factors",
       "mergeable": true,
       "notes": "基于日线行情派生技术因子。"
+    },
+    {
+      "capability_id": "stocks.factors.strategy_window",
+      "support_level": "derived",
+      "handler_name": "get_strategy_factor_window",
+      "mergeable": false,
+      "notes": "基于本地日线、估值、资金流和涨跌停事实表批量派生点时可见的全市场策略因子窗口。"
     },
     {
       "capability_id": "stocks.ownership.shareholders.changes",
@@ -109,6 +116,7 @@
     "get_next_trading_days": "quotemux_packages.derived_core.source:get_next_trading_days",
     "get_previous_trading_days": "quotemux_packages.derived_core.source:get_previous_trading_days",
     "get_shareholder_changes": "quotemux_packages.derived_core.source:get_shareholder_changes",
+    "get_strategy_factor_window": "quotemux_packages.derived_core.source:get_strategy_factor_window",
     "get_technical_factors": "quotemux_packages.derived_core.source:get_technical_factors",
     "get_yearly_trading_calendar": "quotemux_packages.derived_core.source:get_yearly_trading_calendar"
   },
