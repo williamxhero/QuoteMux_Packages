@@ -17,6 +17,8 @@
 - `akshare`
 - `derived_core` 由以上源推导出来的数据
 - `crawler_provider` 爬虫数据
+- `eastmoney_official` P0 公司资料、股本结构和三大财务报表；旧 Eastmoney ann 披露仅保留为未 accepted 对照
+- `cninfo_evidence` 通过 8815 版本化接口提供 CNInfo 正式财报证据，不复制 PDF/正文
 
 
 

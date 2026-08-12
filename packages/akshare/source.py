@@ -35,6 +35,9 @@ _original_request = requests.Session.request
 def _patched_request(self, method, url, **kwargs):
     if url:
         url = re.sub(r'(https?://)\d+\.push2\.eastmoney\.com', r'\1push2.eastmoney.com', url)
+        if "webapi.cninfo.com.cn" in url:
+            # 配股历史回填必须有网络上限，避免单个 CNInfo 请求永久占用工作线程。
+            kwargs.setdefault("timeout", 20)
     return _original_request(self, method, url, **kwargs)
 
 requests.Session.request = _patched_request
@@ -1846,6 +1849,39 @@ def get_rights_issues(code: str, start_date: str, end_date: str) -> list[RightsI
     normalized_code = normalize_stock_code(code)
     actual_start, actual_end = _date_range_from_request("", start_date, end_date, 1440)
     result = _call_ak("stock_allotment_cninfo", ak.stock_allotment_cninfo, symbol=normalized_code, start_date=actual_start.replace("-", ""), end_date=actual_end.replace("-", ""))
+    if result is None or result.empty:
+        return []
+    items: list[RightsIssueItem] = []
+    for _, row in result.iterrows():
+        announce_date = format_date_value(row.get("公告日期", ""))
+        if not _date_in_window(announce_date, actual_start, actual_end):
+            continue
+        items.append(
+            RightsIssueItem(
+                code=normalized_code,
+                announce_date=announce_date,
+                rights_ratio=_float_value(row.get("配股比例")),
+                rights_price=_float_value(row.get("配股价格")),
+                record_date=format_date_value(row.get("股权登记日", "")),
+                ex_date=format_date_value(row.get("除权基准日", "")),
+            )
+        )
+    return sorted(items, key=lambda item: (item.code, item.announce_date, item.record_date))
+
+
+def fetch_rights_issues_required(code: str, start_date: str, end_date: str) -> list[RightsIssueItem]:
+    normalized_code = normalize_stock_code(code)
+    if ak is None:
+        raise RuntimeError("AkShare 不可用")
+    actual_start, actual_end = _date_range_from_request("", start_date, end_date, 1440)
+    result = call_provider_api(
+        "akshare",
+        "stock_allotment_cninfo",
+        ak.stock_allotment_cninfo,
+        symbol=normalized_code,
+        start_date=actual_start.replace("-", ""),
+        end_date=actual_end.replace("-", ""),
+    )
     if result is None or result.empty:
         return []
     items: list[RightsIssueItem] = []

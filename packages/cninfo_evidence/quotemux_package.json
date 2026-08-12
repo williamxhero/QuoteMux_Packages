@@ -1,0 +1,32 @@
+{
+  "package_id": "cninfo_evidence",
+  "version": "0.1.0",
+  "source_name": "cninfo_evidence",
+  "display_name": "CNInfo 正式财报证据",
+  "description": "通过 8815 唯一版本化 evidence API 提供正式财报结构化证据；不读取或复制 PDF、正文。",
+  "capabilities": [
+    {
+      "capability_id": "stocks.finance.report_disclosures",
+      "support_level": "native",
+      "handler_name": "query",
+      "mergeable": false,
+      "notes": "单 Provider no-fallback；source_event_id=evidence_id。"
+    }
+  ],
+  "capability_tags": ["stocks", "p0", "disclosures", "evidence", "cninfo"],
+  "config_schema": [
+    {
+      "name": "base_url",
+      "field_type": "string",
+      "title": "Evidence API base URL",
+      "description": "由 active profile 显式配置的 8815 evidence 服务地址，不含 /api/v1/disclosures。",
+      "required": true,
+      "default_value": ""
+    }
+  ],
+  "secret_fields": [],
+  "supports_multi_instance": false,
+  "handler_targets": {
+    "query": "quotemux_packages.cninfo_evidence:query"
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "package_id": "eastmoney_official",
+  "version": "0.1.0",
+  "source_name": "eastmoney_official",
+  "display_name": "东方财富官方数据",
+  "description": "QuoteMux P0 公司资料、股本结构和三大财务报表 Provider；旧 Eastmoney ann 披露实现仅保留为未 accepted 迁移对照。",
+  "capabilities": [
+    {
+      "capability_id": "stocks.profile.company",
+      "support_level": "native",
+      "handler_name": "query",
+      "mergeable": false,
+      "notes": "P0 专用强类型 no-fallback 查询。"
+    },
+    {
+      "capability_id": "stocks.corporate_actions.share_changes",
+      "support_level": "native",
+      "handler_name": "query",
+      "mergeable": false,
+      "notes": "股本结构历史长期归属 STS。"
+    },
+    {
+      "capability_id": "stocks.finance.statements",
+      "support_level": "native",
+      "handler_name": "query",
+      "mergeable": false,
+      "notes": "三表原值 Decimal，不声明统一金额单位。"
+    },
+    {
+      "capability_id": "stocks.finance.forecasts",
+      "support_level": "native",
+      "handler_name": "query_migration",
+      "mergeable": false,
+      "notes": "强类型 raw/event/audit contract；非 004 指标不写入归母净利润。"
+    },
+    {
+      "capability_id": "stocks.finance.express",
+      "support_level": "native",
+      "handler_name": "query_migration",
+      "mergeable": false,
+      "notes": "强类型 raw/event/audit contract。"
+    },
+    {
+      "capability_id": "funds.etf.profile",
+      "support_level": "native",
+      "handler_name": "query_migration",
+      "mergeable": false,
+      "notes": "基金 F10 详情，不替代 funds.etf.catalog。"
+    }
+  ],
+  "capability_tags": ["stocks", "p0", "fundamentals", "official"],
+  "config_schema": [],
+  "secret_fields": [],
+  "supports_multi_instance": false,
+  "handler_targets": {
+    "query": "quotemux_packages.eastmoney_official:query",
+    "query_migration": "quotemux_packages.eastmoney_official:query_migration"
+  }
+}

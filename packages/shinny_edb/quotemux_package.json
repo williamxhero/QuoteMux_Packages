@@ -1,0 +1,34 @@
+{
+  "package_id": "shinny_edb",
+  "version": "2026.8.12",
+  "source_name": "shinny_edb",
+  "display_name": "信易 EDB",
+  "description": "信易科技 EDB Data Services 免 token 近一年期货分钟线。",
+  "capabilities": [
+    {
+      "capability_id": "futures.quotes.main_continuous.1m",
+      "support_level": "native",
+      "handler_name": "get_future_main_continuous_1m",
+      "mergeable": false,
+      "notes": "KQ 主力连续原始序列；免费访问仅覆盖滚动近一年。"
+    }
+  ],
+  "capability_tags": ["provider", "http", "free"],
+  "config_schema": [
+    {
+      "name": "timeout_seconds",
+      "field_type": "string",
+      "title": "超时秒数",
+      "description": "单个品种请求超时。",
+      "required": false,
+      "default_value": "60"
+    }
+  ],
+  "secret_fields": [],
+  "supports_multi_instance": false,
+  "handler_targets": {
+    "get_future_main_continuous_1m": "quotemux_packages.shinny_edb.source:get_future_main_continuous_1m"
+  },
+  "origin": "builtin",
+  "package_root": ""
+}

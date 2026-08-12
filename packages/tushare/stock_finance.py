@@ -6,6 +6,50 @@ from quotemux.infra.cache.store import build_cache_path, filter_frame_by_date_ra
 from platform_models import AuditItem, DisclosureDateItem, DividendItem, ExpressItem, ForecastItem, MainBusinessItem, RepurchaseItem, RightsIssueItem, ShareChangeItem, UnlockScheduleItem
 from quotemux.infra.common import normalize_stock_code, stock_code_to_ts
 from .helpers import normalize_date_range, normalize_period_range, query_frame, read_cached_ranges
+from .rate_limit import call_tushare_api
+
+
+def _query_frame_required(api_name: str, **kwargs: object) -> pd.DataFrame:
+    from .source import get_ts_pro
+
+    pro = get_ts_pro()
+    if pro is None:
+        raise RuntimeError("Tushare 未配置有效 api_key")
+    fetcher = getattr(pro, api_name, None)
+    if callable(fetcher):
+        frame = call_tushare_api(api_name, fetcher, **kwargs)
+    else:
+        frame = call_tushare_api(api_name, pro.query, api_name, **kwargs)
+    return frame.copy() if frame is not None else pd.DataFrame()
+
+
+def _is_a_share_action_code(code: str) -> bool:
+    normalized_code = normalize_stock_code(code)
+    return len(normalized_code) == 6 and normalized_code.isdigit() and not normalized_code.startswith(("200", "900"))
+
+
+def fetch_all_market_dividends(announce_date: str) -> list[DividendItem]:
+    frame = _query_frame_required("dividend", ann_date=announce_date.replace("-", ""))
+    if frame.empty:
+        return []
+    items: list[DividendItem] = []
+    for _, row in frame.iterrows():
+        code = normalize_stock_code(str(row.get("ts_code", "")))
+        if not _is_a_share_action_code(code):
+            continue
+        items.append(
+            DividendItem(
+                code=code,
+                announce_date=str(row.get("ann_date", "")),
+                record_date=str(row.get("record_date", "")) if pd.notna(row.get("record_date")) else "",
+                ex_date=str(row.get("ex_date", "")) if pd.notna(row.get("ex_date")) else "",
+                pay_date=str(row.get("pay_date", "")) if pd.notna(row.get("pay_date")) else "",
+                cash_dividend_per_share=float(row["cash_div"]) if pd.notna(row.get("cash_div")) else (float(row["cash_div_tax"]) if pd.notna(row.get("cash_div_tax")) else None),
+                stock_dividend_per_share=float(row["stk_div"]) if pd.notna(row.get("stk_div")) else None,
+                capital_reserve_per_share=float(row["stk_bo_rate"]) if pd.notna(row.get("stk_bo_rate")) else None,
+            )
+        )
+    return items
 
 
 def _fetch_dividend_frame(code: str, _: str, __: str) -> pd.DataFrame:

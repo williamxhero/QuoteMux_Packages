@@ -246,6 +246,11 @@ def get_strategy_factor_window(start_date: str, end_date: str, codes: str = "") 
             select day_rows.*
             from fact.stock_daily_1d day_rows
             where day_rows.trade_date between %s::date and %s::date
+              and (
+                  (day_rows.market = 'SHSE' and left(day_rows.code, 1) = '6')
+                  or (day_rows.market = 'SZSE' and left(day_rows.code, 1) in ('0', '3'))
+                  or (day_rows.market = 'BJSE' and (left(day_rows.code, 1) in ('4', '8') or left(day_rows.code, 3) = '920'))
+              )
               and (%s = '' or day_rows.code = any(%s))
         ),
         requested_stocks as (
