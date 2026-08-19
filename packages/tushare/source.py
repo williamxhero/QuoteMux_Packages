@@ -661,6 +661,38 @@ def get_industry_catalog(level: str, source: str, limit: int, offset: int) -> li
     return items
 
 
+def get_adj_factor_snapshot(trade_date: str) -> list[AdjFactorItem]:
+    """Return the provider-native full-market adjustment-factor snapshot."""
+    pro = get_ts_pro()
+    actual_date = format_date_value(trade_date)
+    if pro is None or actual_date == "":
+        return []
+    try:
+        frame = call_tushare_api(
+            "adj_factor",
+            pro.adj_factor,
+            trade_date=actual_date.replace("-", ""),
+        )
+    except Exception:
+        return []
+    if frame is None or frame.empty or not {"ts_code", "trade_date", "adj_factor"}.issubset(frame.columns):
+        return []
+    items: list[AdjFactorItem] = []
+    for _, row in frame.drop_duplicates(subset=["ts_code", "trade_date"], keep="last").iterrows():
+        code = normalize_stock_code(str(row["ts_code"]))
+        factor = pd.to_numeric(row["adj_factor"], errors="coerce")
+        if code == "" or pd.isna(factor) or float(factor) <= 0:
+            continue
+        items.append(
+            AdjFactorItem(
+                code=code,
+                trade_date=format_date_value(row["trade_date"]).replace("-", ""),
+                adj_factor=float(factor),
+            )
+        )
+    return sorted(items, key=lambda item: (item.trade_date, item.code))
+
+
 def get_industry_member_history(board_code: str, start_date: str, end_date: str) -> list[BoardMemberHistoryItem]:
     pro = get_ts_pro()
     normalized_code = str(board_code).strip().upper().split(".", 1)[0]
@@ -719,6 +751,42 @@ def _fetch_board_quotes_frame(board_code: str, start_value: str, end_value: str,
     work["change"] = pd.to_numeric(work["change"], errors="coerce")
     work["pct_chg"] = pd.to_numeric(work["pct_change"], errors="coerce")
     return work[["board_code", "trade_time", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume", "amount"]]
+
+
+def get_ths_daily_snapshot(trade_date: str) -> list[BoardQuoteItem]:
+    """Return the provider-native full THS daily snapshot for one trade date."""
+    actual_trade_date = format_date_value(trade_date)
+    pro = get_ts_pro()
+    if pro is None or actual_trade_date == "":
+        return []
+    frame = call_tushare_api("ths_daily", pro.ths_daily, trade_date=actual_trade_date.replace("-", ""))
+    if frame is None or frame.empty:
+        return []
+    items: list[BoardQuoteItem] = []
+    for row in frame.to_dict("records"):
+        provider_code = str(row.get("ts_code", "")).strip().upper()
+        board_code = provider_code.split(".", 1)[0]
+        row_trade_date = format_date_value(row.get("trade_date"))
+        if board_code == "" or row_trade_date != actual_trade_date:
+            continue
+        items.append(
+            BoardQuoteItem(
+                board_code=board_code,
+                board_name="",
+                trade_time=row_trade_date,
+                freq="1d",
+                open=float(row["open"]) if pd.notna(row.get("open")) else None,
+                high=float(row["high"]) if pd.notna(row.get("high")) else None,
+                low=float(row["low"]) if pd.notna(row.get("low")) else None,
+                close=float(row["close"]) if pd.notna(row.get("close")) else None,
+                pre_close=float(row["pre_close"]) if pd.notna(row.get("pre_close")) else None,
+                change=float(row["change"]) if pd.notna(row.get("change")) else None,
+                pct_chg=float(row["pct_change"]) if pd.notna(row.get("pct_change")) else None,
+                volume=float(row["vol"]) if pd.notna(row.get("vol")) else None,
+                amount=float(row["amount"]) if pd.notna(row.get("amount")) else None,
+            )
+        )
+    return sorted(items, key=lambda item: item.board_code)
 
 
 def get_board_quotes(board_codes: list[str], freq: str, trade_date: str, start_date: str, end_date: str, start_time: str, end_time: str, count: int | None) -> list[BoardQuoteItem]:
@@ -1062,6 +1130,27 @@ def get_index_members(index_code: str, trade_date: str) -> list[IndexMemberItem]
             )
         )
     return items
+
+
+def query_migration(payload: object):
+    from pydantic import TypeAdapter, ValidationError
+
+    from platform_models.migration_contracts import (
+        IndexMembersAuditRequest,
+        MigrationRequest,
+    )
+    from quotemux_packages.tushare.index_members_contract import query_index_members
+    from quotemux_packages.tushare.migration_errors import TushareMigrationError
+
+    try:
+        request = TypeAdapter(MigrationRequest).validate_python(payload)
+    except ValidationError as exc:
+        raise TushareMigrationError(
+            "contract_error", f"migration request 不符合 contract: {exc}"
+        ) from exc
+    if not isinstance(request, IndexMembersAuditRequest):
+        raise TushareMigrationError("contract_error", "Tushare 不支持该 migration capability")
+    return query_index_members(request)
 
 
 def _fetch_stock_quotes_frame(code: str, freq: str, start_dt: datetime | None, end_dt: datetime | None, adjust: str) -> pd.DataFrame:

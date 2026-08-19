@@ -117,7 +117,9 @@ def test_forecast_004_and_express_fields_are_typed(
             ],
         },
     }
-    monkeypatch.setattr(finance_events, "get_json", lambda *args, **kwargs: forecast_payload)
+    monkeypatch.setattr(
+        finance_events, "get_json", lambda *args, **kwargs: forecast_payload
+    )
     forecast = finance_events.query_finance_events(_forecast()).records[0].data
     assert forecast.net_profit_lower == Decimal("200")
     assert forecast.net_profit_excl_nonrecurring_lower is None
@@ -144,7 +146,9 @@ def test_forecast_004_and_express_fields_are_typed(
             ],
         },
     }
-    monkeypatch.setattr(finance_events, "get_json", lambda *args, **kwargs: express_payload)
+    monkeypatch.setattr(
+        finance_events, "get_json", lambda *args, **kwargs: express_payload
+    )
     express = finance_events.query_finance_events(_express()).records[0].data
     assert express.operating_revenue == Decimal("1000.25")
     assert express.net_profit_parent == Decimal("190")
@@ -232,3 +236,21 @@ def test_etf_invalid_date_is_parse_error(monkeypatch: pytest.MonkeyPatch) -> Non
     with pytest.raises(P0ProviderError) as error:
         etf_profile.query_etf_profile(_etf())
     assert error.value.kind == "parse_error"
+
+
+def test_etf_confirmed_empty_is_distinct_from_schema_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "quotemux_packages.eastmoney_official.http_text.get_text",
+        lambda *args, **kwargs: "<html>暂无该基金</html>",
+    )
+    assert etf_profile.query_etf_profile(_etf()).confirmed_empty is True
+
+    monkeypatch.setattr(
+        "quotemux_packages.eastmoney_official.http_text.get_text",
+        lambda *args, **kwargs: "<html>页面结构已经变化</html>",
+    )
+    with pytest.raises(P0ProviderError) as error:
+        etf_profile.query_etf_profile(_etf())
+    assert error.value.kind == "schema_error"

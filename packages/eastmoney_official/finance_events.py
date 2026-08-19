@@ -63,7 +63,9 @@ def query_finance_events(
         message = str(payload.get("message", ""))
         if "返回数据为空" in message:
             return _page(request, [], "", True)
-        raise P0ProviderError("request_error", f"Eastmoney finance events failed: {message}")
+        raise P0ProviderError(
+            "request_error", f"Eastmoney finance events failed: {message}"
+        )
     result = payload.get("result")
     if not isinstance(result, dict):
         raise P0ProviderError("schema_error", "finance events 缺少 result 对象")
@@ -103,31 +105,70 @@ def _record(
     raw_metric_code = optional_string(row, "PREDICT_FINANCE_CODE")
     metric_code = raw_metric_code.lstrip("0") or raw_metric_code
     metric_name = optional_string(row, "PREDICT_FINANCE")
-    subtype = optional_string(row, "PREDICT_TYPE", "FORECAST_TYPE", "CHANGE_REASON", "YJBB_TYPE")
-    summary = optional_string(row, "PREDICT_CONTENT", "CHANGE_REASON_EXPLAIN", "PERFORMANCE_CHANGE", "REASON", "SUMMARY")
-    is_revision = any("修正" in value or "更正" in value for value in (subtype, summary))
+    subtype = optional_string(
+        row, "PREDICT_TYPE", "FORECAST_TYPE", "CHANGE_REASON", "YJBB_TYPE"
+    )
+    summary = optional_string(
+        row,
+        "PREDICT_CONTENT",
+        "CHANGE_REASON_EXPLAIN",
+        "PERFORMANCE_CHANGE",
+        "REASON",
+        "SUMMARY",
+    )
+    is_revision = any(
+        "修正" in value or "更正" in value for value in (subtype, summary)
+    )
     base_type = "forecast" if request.capability_id.endswith("forecasts") else "express"
     event_type = f"{base_type}_revision" if is_revision else base_type
-    event_identity = optional_string(row, "INFO_CODE", "ART_CODE", "NOTICE_ID", "ANNOUNCEMENT_ID", "ID")
+    event_identity = optional_string(
+        row, "INFO_CODE", "ART_CODE", "NOTICE_ID", "ANNOUNCEMENT_ID", "ID"
+    )
     if event_identity:
-        source_event_id = f"{request.market}.{request.code}:{base_type}:{event_identity}"
+        source_event_id = (
+            f"{request.market}.{request.code}:{base_type}:{event_identity}"
+        )
     else:
         source_event_id = f"{request.market}.{request.code}:{base_type}:{report_period}:{date_text(row.get('NOTICE_DATE'), 'NOTICE_DATE', required=False)}:{raw_metric_code or subtype or 'unknown'}"
-    amount_lower = decimal_value(row, "PREDICT_AMT_LOWER", "FORECAST_NETPROFIT_LOWER", "NETPROFIT_LOWER")
-    amount_upper = decimal_value(row, "PREDICT_AMT_UPPER", "FORECAST_NETPROFIT_UPPER", "NETPROFIT_UPPER")
-    yoy_lower = decimal_value(row, "ADD_AMP_LOWER", "PREDICT_RATIO_LOWER", "NETPROFIT_YOY_LOWER", "INCREASE_JZ_LOWER")
-    yoy_upper = decimal_value(row, "ADD_AMP_UPPER", "PREDICT_RATIO_UPPER", "NETPROFIT_YOY_UPPER", "INCREASE_JZ_UPPER")
+    amount_lower = decimal_value(
+        row, "PREDICT_AMT_LOWER", "FORECAST_NETPROFIT_LOWER", "NETPROFIT_LOWER"
+    )
+    amount_upper = decimal_value(
+        row, "PREDICT_AMT_UPPER", "FORECAST_NETPROFIT_UPPER", "NETPROFIT_UPPER"
+    )
+    yoy_lower = decimal_value(
+        row,
+        "ADD_AMP_LOWER",
+        "PREDICT_RATIO_LOWER",
+        "NETPROFIT_YOY_LOWER",
+        "INCREASE_JZ_LOWER",
+    )
+    yoy_upper = decimal_value(
+        row,
+        "ADD_AMP_UPPER",
+        "PREDICT_RATIO_UPPER",
+        "NETPROFIT_YOY_UPPER",
+        "INCREASE_JZ_UPPER",
+    )
     flags: list[str] = []
     # Eastmoney 004 是归母净利润。缺码或其他指标即使金额字段同名，也不能猜成 004。
     parent = base_type == "forecast" and metric_code == "4"
-    excl = base_type == "forecast" and (metric_code == "5" or "扣非" in metric_name or "扣除非经常性损益" in metric_name)
-    revenue_forecast = base_type == "forecast" and (metric_code == "6" or "营业收入" in metric_name)
+    excl = base_type == "forecast" and (
+        metric_code == "5" or "扣非" in metric_name or "扣除非经常性损益" in metric_name
+    )
+    revenue_forecast = base_type == "forecast" and (
+        metric_code == "6" or "营业收入" in metric_name
+    )
     if base_type == "forecast" and not parent:
         flags.append(f"non_comparable_forecast_metric:{raw_metric_code or 'unknown'}")
     values = (amount_lower, amount_upper, yoy_lower, yoy_upper)
     if base_type == "forecast" and all(value is None for value in values):
         flags.append("text_only_forecast")
-    if base_type == "forecast" and not any((parent, excl, revenue_forecast)) and any(value is not None for value in values):
+    if (
+        base_type == "forecast"
+        and not any((parent, excl, revenue_forecast))
+        and any(value is not None for value in values)
+    ):
         flags.append(f"unmapped_forecast_metric:{raw_metric_code or 'unknown'}")
     direction = _direction(summary)
     data = FinancialEventData(
@@ -140,8 +181,12 @@ def _record(
         event_type=event_type,
         event_subtype=subtype,
         is_revision=is_revision,
-        notice_title=optional_string(row, "NOTICE_TITLE", "ANNOUNCEMENT_TITLE", "TITLE"),
-        notice_url=optional_string(row, "NOTICE_URL", "ANNOUNCEMENT_URL", "PDF_URL", "URL"),
+        notice_title=optional_string(
+            row, "NOTICE_TITLE", "ANNOUNCEMENT_TITLE", "TITLE"
+        ),
+        notice_url=optional_string(
+            row, "NOTICE_URL", "ANNOUNCEMENT_URL", "PDF_URL", "URL"
+        ),
         notice_summary=summary,
         forecast_metric_code=raw_metric_code,
         forecast_metric_name=metric_name,
@@ -164,14 +209,46 @@ def _record(
         operating_revenue_yoy_lower=yoy_lower if revenue_forecast else None,
         operating_revenue_yoy_upper=yoy_upper if revenue_forecast else None,
         forecast_amount_unit=optional_string(row, "CURRENCY", "AMOUNT_UNIT", "UNIT"),
-        operating_revenue=decimal_value(row, "TOTAL_OPERATE_INCOME", "OPERATE_INCOME") if base_type == "express" else None,
-        operating_revenue_yoy=decimal_value(row, "YSTZ", "OPERATE_INCOME_YOY", "TOTAL_OPERATE_INCOME_YOY") if base_type == "express" else None,
-        net_profit=decimal_value(row, "NETPROFIT", "NET_PROFIT") if base_type == "express" else None,
-        net_profit_parent=decimal_value(row, "PARENT_NETPROFIT", "NETPROFIT_PARENT") if base_type == "express" else None,
-        net_profit_yoy=decimal_value(row, "JLRTBZCL", "NETPROFIT_YOY", "PARENT_NETPROFIT_YOY") if base_type == "express" else None,
-        basic_eps=decimal_value(row, "BASIC_EPS", "BASIC_EARNINGS_PER_SHARE") if base_type == "express" else None,
-        bps=decimal_value(row, "PARENT_BVPS", "BPS", "BVPS", "NET_ASSET_PER_SHARE") if base_type == "express" else None,
-        roe=decimal_value(row, "WEIGHTAVG_ROE", "ROE") if base_type == "express" else None,
+        operating_revenue=(
+            decimal_value(row, "TOTAL_OPERATE_INCOME", "OPERATE_INCOME")
+            if base_type == "express"
+            else None
+        ),
+        operating_revenue_yoy=(
+            decimal_value(row, "YSTZ", "OPERATE_INCOME_YOY", "TOTAL_OPERATE_INCOME_YOY")
+            if base_type == "express"
+            else None
+        ),
+        net_profit=(
+            decimal_value(row, "NETPROFIT", "NET_PROFIT")
+            if base_type == "express"
+            else None
+        ),
+        net_profit_parent=(
+            decimal_value(row, "PARENT_NETPROFIT", "NETPROFIT_PARENT")
+            if base_type == "express"
+            else None
+        ),
+        net_profit_yoy=(
+            decimal_value(row, "JLRTBZCL", "NETPROFIT_YOY", "PARENT_NETPROFIT_YOY")
+            if base_type == "express"
+            else None
+        ),
+        basic_eps=(
+            decimal_value(row, "BASIC_EPS", "BASIC_EARNINGS_PER_SHARE")
+            if base_type == "express"
+            else None
+        ),
+        bps=(
+            decimal_value(row, "PARENT_BVPS", "BPS", "BVPS", "NET_ASSET_PER_SHARE")
+            if base_type == "express"
+            else None
+        ),
+        roe=(
+            decimal_value(row, "WEIGHTAVG_ROE", "ROE")
+            if base_type == "express"
+            else None
+        ),
         data_quality_flags=flags,
     )
     return MigrationRecord[FinancialEventData](

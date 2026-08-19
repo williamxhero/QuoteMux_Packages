@@ -44,6 +44,7 @@ DEFAULT_SERVERS = (
     ("124.70.199.56", 7709),
     ("180.153.18.172", 80),
 )
+MOOTDX_BAR_PAGE_SIZE = 800
 INDEX_MEMBER_NAME_MAP = {
     "000016": "上证50",
     "000300": "沪深300",
@@ -118,17 +119,40 @@ def _resolve_time_window(
 
 def _estimate_fetch_count(freq: str, start_dt: datetime, end_dt: datetime) -> int:
     span_days = max(1, (end_dt.date() - start_dt.date()).days + 1)
+    age_days = max(0, (datetime.now().date() - end_dt.date()).days)
+    fetch_days = span_days + age_days
     if freq == "1m":
-        return min(60000, max(242, span_days * 242))
+        return min(60000, max(242, fetch_days * 242))
     if freq == "5m":
-        return min(12000, max(48, span_days * 48))
+        return min(12000, max(48, fetch_days * 48))
     if freq == "15m":
-        return min(6000, max(16, span_days * 16))
+        return min(6000, max(16, fetch_days * 16))
     if freq == "30m":
-        return min(3000, max(8, span_days * 8))
+        return min(3000, max(8, fetch_days * 8))
     if freq == "60m":
-        return min(2000, max(4, span_days * 4))
-    return min(4000, max(30, span_days + 10))
+        return min(2000, max(4, fetch_days * 4))
+    return min(4000, max(30, fetch_days + 10))
+
+
+def _fetch_paged_bars(
+    client,
+    method_name: str,
+    *,
+    symbol: str,
+    frequency: int,
+    fetch_count: int,
+) -> pd.DataFrame:
+    pages: list[pd.DataFrame] = []
+    method = getattr(client, method_name)
+    for start in range(0, fetch_count, MOOTDX_BAR_PAGE_SIZE):
+        page_size = min(MOOTDX_BAR_PAGE_SIZE, fetch_count - start)
+        page = method(symbol=symbol, frequency=frequency, start=start, offset=page_size)
+        if page is None or page.empty:
+            break
+        pages.append(page)
+    if not pages:
+        return pd.DataFrame()
+    return pd.concat(pages, ignore_index=True)
 
 
 def _normalize_history_frame(records: pd.DataFrame, code_column: str, code_value: str, freq: str) -> pd.DataFrame:
@@ -160,22 +184,38 @@ def _normalize_history_frame(records: pd.DataFrame, code_column: str, code_value
 
 def _fetch_stock_history_frame(code: str, freq: str, start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
     fetch_count = _estimate_fetch_count(freq, start_dt, end_dt)
-    result = _call_mootdx(
-        "quotes.bars",
-        lambda client: client.bars(symbol=normalize_stock_code(code), frequency=MOOTDX_FREQ_MAP[freq], offset=fetch_count),
-    )
-    frame = _normalize_history_frame(result, "code", normalize_stock_code(code), freq)
-    return filter_frame_by_datetime_range(frame, "trade_time", start_dt, end_dt)
+    normalized_code = normalize_stock_code(code)
+
+    def _fetch_from_server(client) -> pd.DataFrame:
+        result = _fetch_paged_bars(
+            client,
+            "bars",
+            symbol=normalized_code,
+            frequency=MOOTDX_FREQ_MAP[freq],
+            fetch_count=fetch_count,
+        )
+        frame = _normalize_history_frame(result, "code", normalized_code, freq)
+        return filter_frame_by_datetime_range(frame, "trade_time", start_dt, end_dt)
+
+    return _call_mootdx("quotes.bars", _fetch_from_server)
 
 
 def _fetch_index_history_frame(index_code: str, freq: str, start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
     fetch_count = _estimate_fetch_count(freq, start_dt, end_dt)
-    result = _call_mootdx(
-        "quotes.index",
-        lambda client: client.index(symbol=normalize_index_code(index_code), frequency=MOOTDX_FREQ_MAP[freq], offset=fetch_count),
-    )
-    frame = _normalize_history_frame(result, "index_code", normalize_index_code(index_code), freq)
-    return filter_frame_by_datetime_range(frame, "trade_time", start_dt, end_dt)
+    normalized_code = normalize_index_code(index_code)
+
+    def _fetch_from_server(client) -> pd.DataFrame:
+        result = _fetch_paged_bars(
+            client,
+            "index",
+            symbol=normalized_code,
+            frequency=MOOTDX_FREQ_MAP[freq],
+            fetch_count=fetch_count,
+        )
+        frame = _normalize_history_frame(result, "index_code", normalized_code, freq)
+        return filter_frame_by_datetime_range(frame, "trade_time", start_dt, end_dt)
+
+    return _call_mootdx("quotes.index", _fetch_from_server)
 
 
 def _frame_to_stock_quotes(df: pd.DataFrame, freq: str) -> list[StockQuoteItem]:

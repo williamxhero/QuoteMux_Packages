@@ -101,7 +101,7 @@
       "support_level": "native",
       "handler_name": "get_index_members",
       "mergeable": true,
-      "notes": ""
+      "notes": "兼容入口；正式 audited current/history weight contract 通过 query_migration 且要求显式单 instance。"
     },
     {
       "capability_id": "indexes.profile",
@@ -214,6 +214,13 @@
       "handler_name": "get_rank_research_reports",
       "mergeable": true,
       "notes": ""
+    },
+    {
+      "capability_id": "stocks.factors.adj.snapshot",
+      "support_level": "native",
+      "handler_name": "get_adj_factor_snapshot",
+      "mergeable": false,
+      "notes": "Tushare adj_factor full-market trade-date snapshot"
     },
     {
       "capability_id": "stocks.catalog",
@@ -608,8 +615,10 @@
   ],
   "supports_multi_instance": true,
   "handler_targets": {
+    "query_migration": "quotemux_packages.tushare.source:query_migration",
     "get_industry_catalog": "quotemux_packages.tushare.source:get_industry_catalog",
     "get_industry_member_history": "quotemux_packages.tushare.source:get_industry_member_history",
+    "get_adj_factor_snapshot": "quotemux_packages.tushare.source:get_adj_factor_snapshot",
     "get_adj_factors": "quotemux_packages.tushare.source:get_adj_factors",
     "get_auctions": "quotemux_packages.tushare.source:get_auctions",
     "get_audits": "quotemux_packages.tushare.source:get_audits",
@@ -622,6 +631,7 @@
     "get_concept_money_flow": "quotemux_packages.tushare.source:get_concept_money_flow",
     "get_concept_profile": "quotemux_packages.tushare.source:get_concept_profile",
     "get_concept_quotes": "quotemux_packages.tushare.source:get_concept_quotes",
+    "get_ths_daily_snapshot": "quotemux_packages.tushare.source:get_ths_daily_snapshot",
     "get_bse_code_mappings": "quotemux_packages.tushare.source:get_bse_code_mappings",
     "get_ccass_holding_details": "quotemux_packages.tushare.source:get_ccass_holding_details",
     "get_ccass_holdings": "quotemux_packages.tushare.source:get_ccass_holdings",

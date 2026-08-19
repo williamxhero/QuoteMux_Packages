@@ -82,7 +82,9 @@ def raw_hash(row: dict[str, object]) -> str:
     try:
         return canonical_json_sha256(row)
     except (TypeError, ValueError) as exc:
-        raise P0ProviderError("contract_error", f"raw projection 不可 canonical: {exc}") from exc
+        raise P0ProviderError(
+            "contract_error", f"raw projection 不可 canonical: {exc}"
+        ) from exc
 
 
 def request_page(request: object, max_pages: int) -> int:
@@ -101,11 +103,17 @@ def request_page(request: object, max_pages: int) -> int:
 
 
 def next_cursor(request: object, page: int) -> str:
-    return urlsafe_b64encode(f"{page}:{_fingerprint(request)}".encode("utf-8")).decode("ascii").rstrip("=")
+    return (
+        urlsafe_b64encode(f"{page}:{_fingerprint(request)}".encode("utf-8"))
+        .decode("ascii")
+        .rstrip("=")
+    )
 
 
 def _fingerprint(request: object) -> str:
     payload = request.model_dump(mode="json")
     payload["cursor"] = ""
-    data = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    data = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
     return sha256(data).hexdigest()[:24]

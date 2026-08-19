@@ -16,6 +16,7 @@ from quotemux_packages.eastmoney_official.migration_common import raw_hash, utc_
 SOURCE = "eastmoney_fundf10_profile"
 _TABLE_VALUE = r"<th[^>]*>\s*{label}\s*</th>\s*<td[^>]*>(.*?)</td>"
 _FOUND_LABEL = r"成立日期\s*[：:]\s*<span[^>]*>(.*?)</span>"
+_CONFIRMED_EMPTY_MARKERS = ("暂无基金数据", "基金不存在", "暂无该基金")
 
 
 def query_etf_profile(request: EtfProfileRequest) -> MigrationPage[EtfProfileData]:
@@ -33,17 +34,30 @@ def query_etf_profile(request: EtfProfileRequest) -> MigrationPage[EtfProfileDat
         request_timeout=REQUEST_TIMEOUT_SECONDS,
         max_bytes=ETF_PROFILE_MAX_RESPONSE_BYTES,
     )
-    found_text = _extract(_FOUND_LABEL, text) or _first_slash(_table(text, "成立日期/规模"))
+    found_text = _extract(_FOUND_LABEL, text) or _first_slash(
+        _table(text, "成立日期/规模")
+    )
     found_date = _fund_date(found_text)
     if found_date == "":
-        return _page(request, [], True)
+        if any(marker in text for marker in _CONFIRMED_EMPTY_MARKERS):
+            return _page(request, [], True)
+        raise P0ProviderError("schema_error", "基金 F10 页面缺少成立日期")
     name = _table(text, "基金简称")
     full_name = _table(text, "基金全称")
     fund_type = _table(text, "基金类型")
     listing_date = _table(text, "上市日期")
     if listing_date:
         listing_date = _fund_date(listing_date)
-    flags = [field for field, value in (("missing_name", name), ("missing_full_name", full_name), ("missing_fund_type", fund_type), ("missing_listing_date", listing_date)) if value == ""]
+    flags = [
+        field
+        for field, value in (
+            ("missing_name", name),
+            ("missing_full_name", full_name),
+            ("missing_fund_type", fund_type),
+            ("missing_listing_date", listing_date),
+        )
+        if value == ""
+    ]
     projection: dict[str, object] = {
         "source_url": url,
         "fund_name": name,
