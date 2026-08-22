@@ -14,6 +14,15 @@ BOARD_STOCK_INDUSTRY_MAP = {
 }
 
 
+_STRATEGY_FACTOR_IDENTITY_JOIN_SQL = """
+            join ref.stock identity_rows
+              on identity_rows.market = day_rows.market
+             and identity_rows.code = day_rows.code
+             and identity_rows.listed_date <= day_rows.trade_date
+             and (identity_rows.delisted_date is null or identity_rows.delisted_date > day_rows.trade_date)
+"""
+
+
 def _rsi(series: pd.Series, period: int) -> pd.Series:
     delta = series.diff()
     gain = delta.clip(lower=0)
@@ -241,8 +250,8 @@ def get_strategy_factor_window(start_date: str, end_date: str, codes: str = "") 
         raise ValueError("start_date 和 end_date 必须是有效日期，且 start_date 不得晚于 end_date")
     requested_codes = sorted({normalize_stock_code(item) for item in codes.split(",") if normalize_stock_code(item) != ""})
     frame = query_dataframe(
-        """
-        with requested_rows as (
+        f"""
+        with candidate_rows as (
             select day_rows.*
             from fact.stock_daily_1d day_rows
             where day_rows.trade_date between %s::date and %s::date
@@ -252,6 +261,34 @@ def get_strategy_factor_window(start_date: str, end_date: str, codes: str = "") 
                   or (day_rows.market = 'BJSE' and (left(day_rows.code, 1) in ('4', '8') or left(day_rows.code, 3) = '920'))
               )
               and (%s = '' or day_rows.code = any(%s))
+        ),
+        requested_rows as (
+            select day_rows.*
+            from candidate_rows day_rows
+            {_STRATEGY_FACTOR_IDENTITY_JOIN_SQL}
+            union
+            select day_rows.*
+            from candidate_rows day_rows
+            join ref.stock_code_migration migration
+              on migration.old_market = day_rows.market
+             and migration.old_code = day_rows.code
+             and migration.trade_date = day_rows.trade_date
+             and migration.old_market = 'BJSE'
+             and migration.new_market = 'BJSE'
+            join ref.stock successor_rows
+              on successor_rows.market = migration.new_market
+             and successor_rows.code = migration.new_code
+             and successor_rows.listed_date <= day_rows.trade_date
+             and (successor_rows.delisted_date is null or successor_rows.delisted_date > day_rows.trade_date)
+            where not exists (
+                select 1
+                from ref.stock_code_migration competing_migration
+                where competing_migration.old_market = migration.old_market
+                  and competing_migration.old_code = migration.old_code
+                  and competing_migration.trade_date = migration.trade_date
+                  and (competing_migration.new_market, competing_migration.new_code)
+                      is distinct from (migration.new_market, migration.new_code)
+            )
         ),
         requested_stocks as (
             select distinct market, code
@@ -351,6 +388,9 @@ def get_strategy_factor_window(start_date: str, end_date: str, codes: str = "") 
             price_band.upper_limit,
             price_band.lower_limit,
             case
+                when (to_jsonb(price_band) ->> 'price_band_status') = 'no_price_limit'
+                 and price_band.upper_limit is null
+                 and price_band.lower_limit is null then 'no_price_limit'
                 when day_rows.close is null or price_band.upper_limit is null or price_band.lower_limit is null then ''
                 when abs(day_rows.close - price_band.upper_limit) <= 0.001 then 'upper_limit'
                 when abs(day_rows.close - price_band.lower_limit) <= 0.001 then 'lower_limit'

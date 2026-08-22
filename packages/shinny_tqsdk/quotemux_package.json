@@ -1,0 +1,74 @@
+{
+  "package_id": "shinny_tqsdk",
+  "version": "2026.8.20",
+  "source_name": "shinny_tqsdk",
+  "display_name": "信易天勤 TqSdk",
+  "description": "通过 TqSdk 提供中国期货主力连续合约的只读实时行情。",
+  "capabilities": [
+    {
+      "capability_id": "futures.contracts.catalog",
+      "support_level": "native",
+      "handler_name": "get_future_contract_catalog",
+      "mergeable": false,
+      "notes": "TqSdk 当前未下市 FUTURE 合约目录与原始规格。"
+    },
+    {
+      "capability_id": "futures.contracts.main_mapping",
+      "support_level": "native",
+      "handler_name": "get_future_main_contract_mapping",
+      "mergeable": false,
+      "notes": "TqSdk 当前主力连续合约到真实交割合约的映射。"
+    },
+    {
+      "capability_id": "futures.quotes.contract.realtime",
+      "support_level": "native",
+      "handler_name": "get_future_contract_realtime_quotes",
+      "mergeable": false,
+      "notes": "真实交割合约的实时完整盘口快照，含五档报价和可用交易所字段。"
+    },
+    {
+      "capability_id": "futures.quotes.main_continuous.realtime",
+      "support_level": "native",
+      "handler_name": "get_future_main_continuous_realtime",
+      "mergeable": false,
+      "notes": "订阅 KQ.m@{exchange}.{product}，返回实时快照和当前实际主力合约。"
+    }
+  ],
+  "capability_tags": ["provider", "socket", "realtime", "futures"],
+  "config_schema": [
+    {
+      "name": "username",
+      "field_type": "string",
+      "title": "天勤账户",
+      "description": "TqSdk/天勤量化账户用户名。",
+      "required": true,
+      "default_value": ""
+    },
+    {
+      "name": "password",
+      "field_type": "string",
+      "title": "天勤密码",
+      "description": "TqSdk/天勤量化账户密码，仅保存为 secret。",
+      "required": true,
+      "default_value": ""
+    },
+    {
+      "name": "timeout_seconds",
+      "field_type": "string",
+      "title": "订阅超时秒数",
+      "description": "等待首个实时行情更新的最长时间。",
+      "required": false,
+      "default_value": "5"
+    }
+  ],
+  "secret_fields": ["password"],
+  "supports_multi_instance": true,
+  "handler_targets": {
+    "get_future_contract_catalog": "quotemux_packages.shinny_tqsdk.source:get_future_contract_catalog",
+    "get_future_contract_realtime_quotes": "quotemux_packages.shinny_tqsdk.source:get_future_contract_realtime_quotes",
+    "get_future_main_contract_mapping": "quotemux_packages.shinny_tqsdk.source:get_future_main_contract_mapping",
+    "get_future_main_continuous_realtime": "quotemux_packages.shinny_tqsdk.source:get_future_main_continuous_realtime"
+  },
+  "origin": "builtin",
+  "package_root": ""
+}

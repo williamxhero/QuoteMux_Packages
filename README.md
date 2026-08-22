@@ -19,6 +19,8 @@
 - `crawler_provider` 爬虫数据
 - `eastmoney_official` P0 公司资料、股本结构和三大财务报表；旧 Eastmoney ann 披露仅保留为未 accepted 对照
 - `cninfo_evidence` 通过 8815 版本化接口提供 CNInfo 正式财报证据，不复制 PDF/正文
+- `shinny_edb` 信易 EDB 近一年期货分钟线
+- `shinny_tqsdk` 信易天勤 TqSdk 只读实时期货与合约元数据
 
 
 
