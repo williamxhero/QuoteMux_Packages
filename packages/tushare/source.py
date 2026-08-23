@@ -199,6 +199,8 @@ def _apply_bse_code_mappings(frame: pd.DataFrame, mappings: list[BSECodeMappingI
             old_code_rows = work["code"].astype(str) == mapping.old_code
         work.loc[old_code_rows, "list_status2"] = "delisted"
         work.loc[old_code_rows, "delist_date"] = mapping.effective_date
+        if "list_date" in work.columns:
+            work.loc[work["code"].astype(str) == mapping.new_code, "list_date"] = mapping.effective_date
     return work
 
 

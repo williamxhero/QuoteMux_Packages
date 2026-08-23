@@ -11,6 +11,21 @@ from quotemux.infra.common import format_date_value, normalize_stock_code, split
 from .helpers import normalize_date_range, normalize_period_range, plan_days, query_frame, read_cached_once, read_cached_ranges
 
 
+# Tushare's bse_mapping `list_date` is the issuer's original listing date, not
+# the date on which an existing issuer began using its 920 code.  The BSE's
+# 2025-04-25 notice makes the first six migrations effective on 2025-05-06;
+# the remaining 242 legacy listings changed codes on 2025-10-09.
+_BSE_DEFAULT_CODE_MIGRATION_EFFECTIVE_DATE = "20251009"
+_BSE_CODE_MIGRATION_EFFECTIVE_DATES = {
+    "920167": "20250506",
+    "920445": "20250506",
+    "920489": "20250506",
+    "920682": "20250506",
+    "920799": "20250506",
+    "920819": "20250506",
+}
+
+
 _DAILY_MARKET_LOCKS: dict[str, threading.Lock] = {}
 _DAILY_MARKET_LOCKS_LOCK = threading.Lock()
 
@@ -420,7 +435,10 @@ def get_bse_code_mappings(old_code: str, new_code: str, status: str) -> list[BSE
     work = cache_df.copy()
     work["old_code"] = work["o_code"].astype(str).str.split(".").str[0] if "o_code" in work.columns else ""
     work["new_code"] = work["n_code"].astype(str).str.split(".").str[0] if "n_code" in work.columns else ""
-    work["effective_date"] = work["list_date"].astype(str) if "list_date" in work.columns else ""
+    # `bse_mapping` only contains legacy-code migrations.  Its list_date is
+    # deliberately ignored here: using it opens a 920-code identity before
+    # that code could have traded and hides the corresponding old-code facts.
+    work["effective_date"] = work["new_code"].map(_BSE_CODE_MIGRATION_EFFECTIVE_DATES).fillna(_BSE_DEFAULT_CODE_MIGRATION_EFFECTIVE_DATE)
     work["status"] = "active"
     if old_code:
         work = work[work["old_code"] == normalize_stock_code(old_code)]
