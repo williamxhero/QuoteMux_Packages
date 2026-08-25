@@ -22,9 +22,21 @@ from typing import Iterable, Mapping
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _SERIES_TYPE = "back_adjusted_continuous"
 _REQUIRED_RAW_FIELDS = frozenset(
-    {"product_code", "actual_contract", "bar_time", "open", "high", "low", "close", "volume", "open_interest"}
+    {
+        "product_code",
+        "actual_contract",
+        "bar_time",
+        "session_anchor_date",
+        "trading_day",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "open_interest",
+    }
 )
-_REQUIRED_MAPPING_FIELDS = frozenset({"product_code", "trade_date", "actual_contract"})
+_REQUIRED_MAPPING_FIELDS = frozenset({"product_code", "mapping_effective_date", "actual_contract"})
 
 
 class FuturesRepairValidationError(ValueError):
@@ -48,7 +60,7 @@ class ImmutableArtifact:
 @dataclass(frozen=True)
 class ActualContractMapping:
     product_code: str
-    trade_date: str
+    mapping_effective_date: str
     actual_contract: str
 
 
@@ -57,7 +69,9 @@ class OffsetSegment:
     """One frozen product/day/offset interval that may not cross a roll."""
 
     product_code: str
-    trade_date: str
+    session_anchor_date: str
+    trading_day: str
+    mapping_effective_date: str
     start_time: str
     end_time: str
     actual_contract: str
@@ -85,6 +99,8 @@ class RawContractBar:
     product_code: str
     actual_contract: str
     bar_time: str
+    session_anchor_date: str
+    trading_day: str
     open: Decimal
     high: Decimal
     low: Decimal
@@ -127,6 +143,8 @@ class DerivationResult:
 
     staged_rows: tuple[StagedBackAdjustedBar, ...]
     derivation_manifest: Mapping[str, object]
+    staged_artifact: Mapping[str, object]
+    staged_artifact_bytes: bytes
 
 
 def _text(value: object, field: str) -> str:
@@ -170,9 +188,20 @@ def _date_from_time(bar_time: str) -> str:
     return bar_time[:10]
 
 
+def _date(value: object, field: str) -> str:
+    text = _text(value, field)
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError as exc:
+        raise FuturesRepairValidationError(f"{field} must be YYYY-MM-DD") from exc
+
+
 def _canonical_sha256(rows: Iterable[Mapping[str, object]]) -> str:
-    canonical = json.dumps(list(rows), ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return hashlib.sha256(_canonical_json_bytes(list(rows))).hexdigest()
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
 
 
 def _validate_artifact(artifact: ImmutableArtifact, label: str, required_fields: frozenset[str]) -> None:
@@ -209,6 +238,8 @@ def _as_raw_bar(value: RawContractBar | Mapping[str, object]) -> RawContractBar:
         product_code=_text(value.get("product_code"), "raw.product_code"),
         actual_contract=_text(value.get("actual_contract"), "raw.actual_contract"),
         bar_time=_minute_time(value.get("bar_time"), "raw.bar_time"),
+        session_anchor_date=_date(value.get("session_anchor_date"), "raw.session_anchor_date"),
+        trading_day=_date(value.get("trading_day"), "raw.trading_day"),
         open=_decimal(value.get("open"), "raw.open"),
         high=_decimal(value.get("high"), "raw.high"),
         low=_decimal(value.get("low"), "raw.low"),
@@ -240,7 +271,7 @@ def _as_mapping(value: ActualContractMapping | Mapping[str, object]) -> ActualCo
         value = asdict(value)
     return ActualContractMapping(
         product_code=_text(value.get("product_code"), "mapping.product_code"),
-        trade_date=_text(value.get("trade_date"), "mapping.trade_date"),
+        mapping_effective_date=_date(value.get("mapping_effective_date"), "mapping.mapping_effective_date"),
         actual_contract=_text(value.get("actual_contract"), "mapping.actual_contract"),
     )
 
@@ -250,7 +281,9 @@ def _as_segment(value: OffsetSegment | Mapping[str, object]) -> OffsetSegment:
         value = asdict(value)
     return OffsetSegment(
         product_code=_text(value.get("product_code"), "segment.product_code"),
-        trade_date=_text(value.get("trade_date"), "segment.trade_date"),
+        session_anchor_date=_date(value.get("session_anchor_date"), "segment.session_anchor_date"),
+        trading_day=_date(value.get("trading_day"), "segment.trading_day"),
+        mapping_effective_date=_date(value.get("mapping_effective_date"), "segment.mapping_effective_date"),
         start_time=_minute_time(value.get("start_time"), "segment.start_time"),
         end_time=_minute_time(value.get("end_time"), "segment.end_time"),
         actual_contract=_text(value.get("actual_contract"), "segment.actual_contract"),
@@ -336,27 +369,29 @@ def derive_back_adjusted_1m(
         _validate_ohlc(item.open, item.high, item.low, item.close, f"frozen bar {key}")
         frozen_by_key[key] = item
 
-    mapping_by_day: dict[tuple[str, str], ActualContractMapping] = {}
+    mapping_by_effective_date: dict[tuple[str, str], ActualContractMapping] = {}
     for item in mappings:
-        key = (item.product_code, item.trade_date)
-        if key in mapping_by_day:
+        key = (item.product_code, item.mapping_effective_date)
+        if key in mapping_by_effective_date:
             raise FuturesRepairValidationError(f"duplicate actual-contract mapping {key}")
-        mapping_by_day[key] = item
+        mapping_by_effective_date[key] = item
 
     segments_by_day: dict[tuple[str, str], list[OffsetSegment]] = {}
     for item in segments:
-        if _date_from_time(item.start_time) != item.trade_date or _date_from_time(item.end_time) != item.trade_date:
-            raise FuturesRepairValidationError("offset segment cannot cross a trade date")
+        if _date_from_time(item.start_time) not in {item.session_anchor_date, item.trading_day} or _date_from_time(item.end_time) not in {item.session_anchor_date, item.trading_day}:
+            raise FuturesRepairValidationError("offset segment is outside its explicit session_anchor_date/trading_day")
         if item.end_time < item.start_time:
             raise FuturesRepairValidationError("offset segment end_time precedes start_time")
         if item.tick_size <= 0:
             raise FuturesRepairValidationError("offset segment tick_size must be positive")
-        mapping = mapping_by_day.get((item.product_code, item.trade_date))
+        if item.trading_day != item.mapping_effective_date:
+            raise FuturesRepairValidationError("offset segment trading_day must equal its mapping_effective_date")
+        mapping = mapping_by_effective_date.get((item.product_code, item.mapping_effective_date))
         if mapping is None or mapping.actual_contract != item.actual_contract:
             raise FuturesRepairValidationError(
-                f"offset segment {(item.product_code, item.trade_date)} lacks the same exact actual-contract mapping"
+                f"offset segment {(item.product_code, item.mapping_effective_date)} lacks the same exact actual-contract mapping"
             )
-        segments_by_day.setdefault((item.product_code, item.trade_date), []).append(item)
+        segments_by_day.setdefault((item.product_code, item.mapping_effective_date), []).append(item)
     for key, day_segments in segments_by_day.items():
         previous_end: str | None = None
         for item in sorted(day_segments, key=lambda candidate: candidate.start_time):
@@ -368,7 +403,7 @@ def derive_back_adjusted_1m(
         matches = [
             item
             for item in segments
-            if item.product_code == product_code and item.trade_date == _date_from_time(bar_time)
+            if item.product_code == product_code
             and item.start_time <= bar_time <= item.end_time
         ]
         if len(matches) != 1:
@@ -408,6 +443,8 @@ def derive_back_adjusted_1m(
             raise FuturesRepairValidationError(f"missing raw overlap needed to prove segment {key}")
         if source.actual_contract != segment.actual_contract:
             raise FuturesRepairValidationError(f"raw actual contract does not match mapping at {key}")
+        if source.session_anchor_date != segment.session_anchor_date or source.trading_day != segment.trading_day:
+            raise FuturesRepairValidationError(f"raw session_anchor_date/trading_day does not match frozen segment at {key}")
         for name in ("open", "high", "low", "close"):
             raw_price = getattr(source, name)
             target_price = getattr(target, name)
@@ -430,9 +467,11 @@ def derive_back_adjusted_1m(
         if source is None:
             raise FuturesRepairValidationError(f"source capture does not contain expected gap key {key}")
         segment = segment_for(*key)
-        mapping = mapping_by_day[(key[0], _date_from_time(key[1]))]
+        mapping = mapping_by_effective_date[(key[0], segment.mapping_effective_date)]
         if source.actual_contract != mapping.actual_contract or source.actual_contract != segment.actual_contract:
             raise FuturesRepairValidationError(f"source actual contract does not match frozen mapping at {key}")
+        if source.session_anchor_date != segment.session_anchor_date or source.trading_day != segment.trading_day:
+            raise FuturesRepairValidationError(f"source session_anchor_date/trading_day does not match frozen segment at {key}")
         adjusted = tuple(getattr(source, name) - segment.adjustment_offset for name in ("open", "high", "low", "close"))
         for name, price in zip(("open", "high", "low", "close"), adjusted, strict=True):
             _assert_tick(price, segment.tick_size, f"derived {name} {key}")
@@ -455,6 +494,23 @@ def derive_back_adjusted_1m(
     if not staged:
         raise FuturesRepairValidationError("derivation produced zero staged rows")
 
+    exact_missing_keys = [
+        {"product_code": product_code, "bar_time": bar_time}
+        for product_code, bar_time in sorted(expected_gap_keys)
+    ]
+    staged_artifact = {
+        "schema_version": "futures_back_adjusted_1m_staged_artifact_v1",
+        "series_type": _SERIES_TYPE,
+        "frozen_dataset_version": frozen_dataset_version,
+        "ruleset_sha256": ruleset_sha256,
+        "gap_ranges_artifact_sha256": gap_ranges_artifact_sha256,
+        "source_capture": asdict(source_capture),
+        "contract_mapping_capture": asdict(contract_mapping_capture),
+        "exact_missing_keys": exact_missing_keys,
+        "rows": [asdict(item) for item in staged],
+    }
+    staged_artifact_bytes = _canonical_json_bytes(staged_artifact)
+    staged_artifact_sha256 = hashlib.sha256(staged_artifact_bytes).hexdigest()
     manifest = {
         "schema_version": "futures_back_adjusted_1m_derivation_v1",
         "series_type": _SERIES_TYPE,
@@ -465,9 +521,16 @@ def derive_back_adjusted_1m(
         "contract_mapping_capture": asdict(contract_mapping_capture),
         "row_count": len(staged),
         "staged_rowset_sha256": _canonical_sha256(asdict(item) for item in staged),
+        "staged_artifact_sha256": staged_artifact_sha256,
+        "exact_missing_keys": exact_missing_keys,
         "overlap_proof_row_count": proof_count,
         "overlap_volume_oi_mismatch_count": len(overlap_volume_oi_mismatches),
         "overlap_volume_oi_mismatches": overlap_volume_oi_mismatches,
         "writes_database": False,
     }
-    return DerivationResult(staged_rows=tuple(staged), derivation_manifest=manifest)
+    return DerivationResult(
+        staged_rows=tuple(staged),
+        derivation_manifest=manifest,
+        staged_artifact=staged_artifact,
+        staged_artifact_bytes=staged_artifact_bytes,
+    )

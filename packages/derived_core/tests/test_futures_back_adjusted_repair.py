@@ -43,6 +43,8 @@ def _raw(bar_time: str, *, contract: str = "AG2604.SHF", close: str = "6000") ->
         product_code="ag",
         actual_contract=contract,
         bar_time=bar_time,
+        session_anchor_date="2026-02-02",
+        trading_day="2026-02-02",
         open=close_value - Decimal("1"),
         high=close_value + Decimal("2"),
         low=close_value - Decimal("3"),
@@ -75,13 +77,13 @@ def _derive(raw: list[RawContractBar], frozen: list[FrozenBackAdjustedBar] | Non
             source="formal_source",
             capture_id="capture-001",
             rows=[asdict(item) for item in raw],
-            record_fields=("product_code", "actual_contract", "bar_time", "open", "high", "low", "close", "volume", "open_interest"),
+            record_fields=("product_code", "actual_contract", "bar_time", "session_anchor_date", "trading_day", "open", "high", "low", "close", "volume", "open_interest"),
         ),
         contract_mapping_capture=_artifact(
             source="tushare",
             capture_id="mapping-001",
             rows=[asdict(item) for item in mappings],
-            record_fields=("product_code", "trade_date", "actual_contract"),
+            record_fields=("product_code", "mapping_effective_date", "actual_contract"),
         ),
         frozen_dataset_version="mhd-v1-frozen",
         gap_ranges_artifact_sha256="b" * 64,
@@ -92,7 +94,9 @@ def _derive(raw: list[RawContractBar], frozen: list[FrozenBackAdjustedBar] | Non
         offset_segments=[
             OffsetSegment(
                 product_code="ag",
-                trade_date="2026-02-02",
+                session_anchor_date="2026-02-02",
+                trading_day="2026-02-02",
+                mapping_effective_date="2026-02-02",
                 start_time="2026-02-02 09:01:00",
                 end_time="2026-02-02 09:03:00",
                 actual_contract="AG2604.SHF",
@@ -123,6 +127,9 @@ def test_derives_only_explicit_gap_keys_with_immutable_lineage() -> None:
     assert result.derivation_manifest["row_count"] == 1
     assert result.derivation_manifest["overlap_proof_row_count"] == 2
     assert result.derivation_manifest["writes_database"] is False
+    assert result.staged_artifact["schema_version"] == "futures_back_adjusted_1m_staged_artifact_v1"
+    assert result.derivation_manifest["staged_artifact_sha256"] == hashlib.sha256(result.staged_artifact_bytes).hexdigest()
+    assert result.derivation_manifest["exact_missing_keys"] == [{"product_code": "ag", "bar_time": "2026-02-02 09:02:00"}]
 
 
 def test_fails_closed_when_any_frozen_overlap_is_not_in_the_capture() -> None:
@@ -155,3 +162,72 @@ def test_never_overwrites_overlap_when_source_volume_has_a_revision() -> None:
 
     assert [item.bar_time for item in result.staged_rows] == ["2026-02-02 09:02:00"]
     assert result.derivation_manifest["overlap_volume_oi_mismatch_count"] == 1
+
+
+def test_rejects_night_segment_when_mapping_effective_date_is_session_anchor() -> None:
+    raw = [
+        RawContractBar(
+            product_code="ag",
+            actual_contract="AG2604.SHF",
+            bar_time="2026-02-01 21:01:00",
+            session_anchor_date="2026-02-01",
+            trading_day="2026-02-02",
+            open=Decimal("5999"),
+            high=Decimal("6002"),
+            low=Decimal("5997"),
+            close=Decimal("6000"),
+            volume=Decimal("12"),
+            open_interest=Decimal("34"),
+        )
+    ]
+    frozen = [
+        FrozenBackAdjustedBar(
+            product_code="ag",
+            bar_time="2026-02-01 21:01:00",
+            open=Decimal("4999"),
+            high=Decimal("5002"),
+            low=Decimal("4997"),
+            close=Decimal("5000"),
+            volume=Decimal("12"),
+            open_interest=Decimal("34"),
+            adjustment_offset=Decimal("1000"),
+        )
+    ]
+    mappings = [ActualContractMapping("ag", "2026-02-01", "AG2604.SHF")]
+    with pytest.raises(FuturesRepairValidationError, match="trading_day must equal"):
+        derive_back_adjusted_1m(
+            source_capture=_artifact(
+                source="formal_source",
+                capture_id="capture-night",
+                rows=[asdict(item) for item in raw],
+                record_fields=("product_code", "actual_contract", "bar_time", "session_anchor_date", "trading_day", "open", "high", "low", "close", "volume", "open_interest"),
+            ),
+            contract_mapping_capture=_artifact(
+                source="tushare",
+                capture_id="mapping-night",
+                rows=[asdict(item) for item in mappings],
+                record_fields=("product_code", "mapping_effective_date", "actual_contract"),
+            ),
+            frozen_dataset_version="mhd-v1-frozen",
+            gap_ranges_artifact_sha256="b" * 64,
+            ruleset_sha256="c" * 64,
+            raw_contract_bars=raw,
+            frozen_back_adjusted_bars=frozen,
+            actual_contract_mappings=mappings,
+            offset_segments=[
+                OffsetSegment(
+                    product_code="ag",
+                    session_anchor_date="2026-02-01",
+                    trading_day="2026-02-02",
+                    mapping_effective_date="2026-02-01",
+                    start_time="2026-02-01 21:01:00",
+                    end_time="2026-02-01 21:01:00",
+                    actual_contract="AG2604.SHF",
+                    adjustment_offset=Decimal("1000"),
+                    tick_size=Decimal("1"),
+                )
+            ],
+            exact_gap_ranges=[
+                ExactGapRange("ag", "2026-02-01 21:01:00", "2026-02-01 21:01:00", ("2026-02-01 21:01:00",))
+            ],
+        )
