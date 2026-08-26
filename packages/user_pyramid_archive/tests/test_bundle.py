@@ -19,6 +19,8 @@ def _source(root: Path, rows: dict[str, list[str]], include_tll: bool = True) ->
         (data / name).write_text("\n".join(rows.get(name, ["2020/01/02-09:01\t1\t1\t1\t1\t1\t0"])) + "\n", encoding="gbk")
     if include_tll:
         (data / "TLL0.txt").write_text("2020/01/02-09:01\t1\t1\t1\t1\t1\t0\n", encoding="gbk")
+    evidence = root / "换期跳空时间"; evidence.mkdir()
+    (evidence / "说明.txt").write_text("evidence", encoding="utf-8")
 
 
 def test_tl_mapping_and_authorization(tmp_path: Path) -> None:
