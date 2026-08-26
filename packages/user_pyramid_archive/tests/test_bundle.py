@@ -46,8 +46,8 @@ def test_conflicts_invalid_and_fact_source_key_are_deterministic(tmp_path: Path)
     source = tmp_path / "source"; _source(source, rows)
     first = build_bundle(source, tmp_path / "one", AUTHORIZATION, batch_size=2)
     second = build_bundle(source, tmp_path / "two", AUTHORIZATION, batch_size=3)
-    one = json.loads((tmp_path / "one" / "manifest.json").read_text())
-    two = json.loads((tmp_path / "two" / "manifest.json").read_text())
+    one = json.loads((tmp_path / "one" / "manifest.json").read_text(encoding="utf-8"))
+    two = json.loads((tmp_path / "two" / "manifest.json").read_text(encoding="utf-8"))
     assert first["source_normalized_rowset_sha256"] == second["source_normalized_rowset_sha256"]
     assert first["fact_normalized_rowset_sha256"] == second["fact_normalized_rowset_sha256"]
     assert first["source_normalized_rowset_sha256"] != first["fact_normalized_rowset_sha256"]
