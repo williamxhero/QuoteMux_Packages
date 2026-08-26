@@ -21,6 +21,7 @@ def _source(root: Path, rows: dict[str, list[str]], include_tll: bool = True) ->
         (data / "TLL0.txt").write_text("2020/01/02-09:01\t1\t1\t1\t1\t1\t0\n", encoding="gbk")
     evidence = root / "换期跳空时间"; evidence.mkdir()
     (evidence / "说明.txt").write_text("evidence", encoding="utf-8")
+    (evidence / "金字塔换期除权日期.xls").write_bytes(b"xls")
 
 
 def test_tl_mapping_and_authorization(tmp_path: Path) -> None:
@@ -54,6 +55,8 @@ def test_conflicts_invalid_and_fact_source_key_are_deterministic(tmp_path: Path)
     assert one["product_coverage"]["ag"]["conflicting_timestamp_keys"] == 1
     assert one["product_coverage"]["ag"]["invalid_ohlcv_rows"] == 1
     assert one["normalized_row_count"] == two["normalized_row_count"]
+    assert [item["path"] for item in one["evidence_files"]] == ["evidence/说明.txt", "evidence/金字塔换期除权日期.xls"]
+    assert one["source_lineage"]["session_grid"] == "unverified"
 
 
 def test_authorization_and_expected_hashes_fail_closed(tmp_path: Path) -> None:

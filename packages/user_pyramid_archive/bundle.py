@@ -167,8 +167,16 @@ def preflight(source_root: Path, output: Path, authorization: Mapping[str, objec
     if output.exists():
         raise ValueError(f"output must be new: {output}")
     sources = _verify_source_root(source_root)
+    evidence_root = source_root / "换期跳空时间"
+    if not evidence_root.is_dir():
+        raise ValueError(f"missing evidence directory: {evidence_root}")
+    evidence = [{"path": path.relative_to(evidence_root).as_posix(), "size_bytes": path.stat().st_size, "sha256": _hash_path(path)}
+                for path in sorted((item for item in evidence_root.rglob("*") if item.is_file()), key=lambda item: item.relative_to(evidence_root).as_posix())]
+    if not evidence or not any(item["path"] == "说明.txt" for item in evidence) or not any(item["path"].lower().endswith(".xls") for item in evidence):
+        raise ValueError("evidence inventory must include 说明.txt and xls")
     return {"status": "preflight_ok", "generation_id": GENERATION_ID, "products": [p for _, p, _, _ in sources],
-            "raw_bytes": sum(path.stat().st_size for _, _, _, path in sources), "authorization": validate_authorization(authorization)}
+            "raw_bytes": sum(path.stat().st_size for _, _, _, path in sources), "evidence_inventory": evidence,
+            "authorization": validate_authorization(authorization)}
 
 
 def _flush(writer: pq.ParquetWriter, rows: list[dict[str, object]], schema: pa.Schema) -> None:
@@ -291,14 +299,16 @@ def build_bundle(source_root: Path, output: Path, authorization: Mapping[str, ob
         evidence_root = source_root / "换期跳空时间"
         if not evidence_root.is_dir():
             raise ValueError(f"missing evidence directory: {evidence_root}")
-        for evidence_path in sorted((path for path in evidence_root.rglob("*") if path.is_file()), key=lambda path: path.name):
+        for evidence_path in sorted((path for path in evidence_root.rglob("*") if path.is_file()), key=lambda path: path.relative_to(evidence_root).as_posix()):
             relative = evidence_path.relative_to(evidence_root).as_posix()
             size, digest = _copy_hashed(evidence_path, temporary / "evidence" / relative)
             evidence_entries.append({"path": f"evidence/{relative}", "size_bytes": size, "sha256": digest})
         manifest = {"schema_version": "futures_user_pyramid_archive_bundle_v1", "package_id": PACKAGE_ID, "package_version": PACKAGE_VERSION,
                     "generation_id": GENERATION_ID, "authorization": approved_authorization, "source_lineage": {"source_class": "user_provided",
                     "source_identity": "pyramid_post_adjusted_20260714", "vendor_entitlement": "unknown_not_asserted", "ao_exchange_correction": "aoL0.txt maps to SHFE; legacy GFEX hashes are audit-only", "oi_semantics": "unavailable",
-                    "fields": "OHLCV,adjustment_offset; OI unavailable", "missing_bar_semantics": "excluded/residual skipped; never interpolated"},
+                    "fields": "OHLCV,adjustment_offset; OI unavailable", "timestamp_contract": "local-naive Asia/Shanghai assumption",
+                    "bar_label": "unverified", "session_grid": "unverified", "units": "unverified", "roll_mapping": "copied gaps/xls evidence",
+                    "missing_bar_semantics": "excluded/residual skipped; never interpolated; no completeness claim"},
                     "raw_aggregate_sha256": raw_aggregate,
                     "raw_aggregate_algorithm": "sha256(canonical_json(artifact_bundle.raw_files; sort_keys,separators=(',',':'),utf8))",
                     "raw_files": raw_entries, "raw_byte_inventory": raw_byte_inventory, "evidence_files": evidence_entries, "staged_artifact_sha256": _hash_path(staged),
