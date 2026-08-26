@@ -25,6 +25,7 @@ def test_tl_mapping_and_authorization(tmp_path: Path) -> None:
     source = tmp_path / "source"; _source(source, {})
     outcome = preflight(source, tmp_path / "bundle", AUTHORIZATION)
     assert PRODUCTS["TL0.txt"][0] == "T"
+    assert PRODUCTS["aoL0.txt"] == ("ao", "SHFE")
     assert "TLL0.txt" not in PRODUCTS
     assert outcome["authorization"] == AUTHORIZATION
     (source / "后复权数据" / "TLL0.txt").unlink()

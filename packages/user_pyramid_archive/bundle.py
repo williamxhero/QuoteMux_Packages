@@ -38,7 +38,7 @@ PRODUCTS: dict[str, tuple[str, str]] = {
     "TL0.txt": ("T", "CFFEX"), "TAL0.txt": ("TA", "CZCE"),
     "TFL0.txt": ("TF", "CFFEX"), "vL0.txt": ("v", "DCE"),
     "yL0.txt": ("y", "DCE"), "lhL0.txt": ("lh", "DCE"),
-    "SAL0.txt": ("SA", "CZCE"), "aoL0.txt": ("ao", "GFEX"),
+    "SAL0.txt": ("SA", "CZCE"), "aoL0.txt": ("ao", "SHFE"),
     "siL0.txt": ("si", "GFEX"),
 }
 
@@ -288,7 +288,7 @@ def build_bundle(source_root: Path, output: Path, authorization: Mapping[str, ob
             raise ValueError(f"source-normalized rowset SHA-256 mismatch: {source_hash.hexdigest()}")
         manifest = {"schema_version": "futures_user_pyramid_archive_bundle_v1", "package_id": PACKAGE_ID, "package_version": PACKAGE_VERSION,
                     "generation_id": GENERATION_ID, "authorization": approved_authorization, "source_lineage": {"source_class": "user_provided",
-                    "source_identity": "pyramid_post_adjusted_20260714", "vendor_entitlement": "unknown_not_asserted", "oi_semantics": "unavailable",
+                    "source_identity": "pyramid_post_adjusted_20260714", "vendor_entitlement": "unknown_not_asserted", "ao_exchange_correction": "aoL0.txt maps to SHFE; legacy GFEX hashes are audit-only", "oi_semantics": "unavailable",
                     "fields": "OHLCV,adjustment_offset; OI unavailable", "missing_bar_semantics": "excluded/residual skipped; never interpolated"},
                     "raw_aggregate_sha256": raw_aggregate,
                     "raw_aggregate_algorithm": "sha256(canonical_json(artifact_bundle.raw_files; sort_keys,separators=(',',':'),utf8))",
