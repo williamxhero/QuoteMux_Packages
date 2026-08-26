@@ -13,15 +13,16 @@ def main() -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--authorization-json", type=Path, required=True,
                         help="explicit private-research authorization evidence JSON")
-    parser.add_argument("--expected-raw-aggregate-sha256", required=True)
-    parser.add_argument("--expected-source-normalized-rowset-sha256", required=True)
+    parser.add_argument("--expected-raw-inventory-json", type=Path, required=True)
+    parser.add_argument("--expected-corrected-raw-aggregate-sha256", required=True)
     parser.add_argument("--batch-size", type=int, default=100_000)
     parser.add_argument("--preflight-only", action="store_true")
     args = parser.parse_args()
     authorization = json.loads(args.authorization_json.read_text(encoding="utf-8"))
     result = (preflight(args.source_root, args.out, authorization) if args.preflight_only else
               build_bundle(args.source_root, args.out, authorization, args.batch_size,
-                           args.expected_raw_aggregate_sha256, args.expected_source_normalized_rowset_sha256))
+                           json.loads(args.expected_raw_inventory_json.read_text(encoding="utf-8")),
+                           args.expected_corrected_raw_aggregate_sha256))
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
 

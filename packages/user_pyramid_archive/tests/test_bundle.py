@@ -59,5 +59,5 @@ def test_authorization_and_expected_hashes_fail_closed(tmp_path: Path) -> None:
     rejected = {**AUTHORIZATION, "redistribution": True}
     with pytest.raises(ValueError, match="redistribution"):
         preflight(source, tmp_path / "bad", rejected)
-    with pytest.raises(ValueError, match="raw aggregate"):
-        build_bundle(source, tmp_path / "wrong", AUTHORIZATION, expected_raw_aggregate_sha256="0" * 64)
+    with pytest.raises(ValueError, match="raw byte inventory"):
+        build_bundle(source, tmp_path / "wrong", AUTHORIZATION, expected_raw_inventory=[])

@@ -184,8 +184,8 @@ def _write_jsonl(stream: Any, digest: Any, value: Mapping[str, object]) -> None:
 
 
 def build_bundle(source_root: Path, output: Path, authorization: Mapping[str, object], batch_size: int = 100_000,
-                 expected_raw_aggregate_sha256: str | None = None,
-                 expected_source_normalized_rowset_sha256: str | None = None) -> dict[str, object]:
+                 expected_raw_inventory: list[Mapping[str, object]] | None = None,
+                 expected_corrected_raw_aggregate_sha256: str | None = None) -> dict[str, object]:
     """Copy, validate and normalize exactly the authorized 23 source files atomically."""
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
@@ -282,17 +282,26 @@ def build_bundle(source_root: Path, output: Path, authorization: Mapping[str, ob
         staged = temporary / "staged.parquet"; normalized = temporary / "normalized.parquet"; facts = temporary / "fact_normalized.parquet"; intervals = temporary / "intervals.jsonl"
         staged_partial.replace(staged); normalized_partial.replace(normalized); facts_partial.replace(facts); intervals_partial.replace(intervals)
         raw_aggregate = hashlib.sha256(_canonical(raw_entries)).hexdigest()
-        if expected_raw_aggregate_sha256 and raw_aggregate != expected_raw_aggregate_sha256:
+        raw_byte_inventory = [{"path": entry["path"], "size_bytes": entry["size_bytes"], "sha256": entry["sha256"]} for entry in raw_entries]
+        if expected_raw_inventory is not None and raw_byte_inventory != list(expected_raw_inventory):
+            raise ValueError("raw byte inventory mismatch")
+        if expected_corrected_raw_aggregate_sha256 and raw_aggregate != expected_corrected_raw_aggregate_sha256:
             raise ValueError(f"raw aggregate SHA-256 mismatch: {raw_aggregate}")
-        if expected_source_normalized_rowset_sha256 and source_hash.hexdigest() != expected_source_normalized_rowset_sha256:
-            raise ValueError(f"source-normalized rowset SHA-256 mismatch: {source_hash.hexdigest()}")
+        evidence_entries: list[dict[str, object]] = []
+        evidence_root = source_root / "换期跳空时间"
+        if not evidence_root.is_dir():
+            raise ValueError(f"missing evidence directory: {evidence_root}")
+        for evidence_path in sorted((path for path in evidence_root.rglob("*") if path.is_file()), key=lambda path: path.name):
+            relative = evidence_path.relative_to(evidence_root).as_posix()
+            size, digest = _copy_hashed(evidence_path, temporary / "evidence" / relative)
+            evidence_entries.append({"path": f"evidence/{relative}", "size_bytes": size, "sha256": digest})
         manifest = {"schema_version": "futures_user_pyramid_archive_bundle_v1", "package_id": PACKAGE_ID, "package_version": PACKAGE_VERSION,
                     "generation_id": GENERATION_ID, "authorization": approved_authorization, "source_lineage": {"source_class": "user_provided",
                     "source_identity": "pyramid_post_adjusted_20260714", "vendor_entitlement": "unknown_not_asserted", "ao_exchange_correction": "aoL0.txt maps to SHFE; legacy GFEX hashes are audit-only", "oi_semantics": "unavailable",
                     "fields": "OHLCV,adjustment_offset; OI unavailable", "missing_bar_semantics": "excluded/residual skipped; never interpolated"},
                     "raw_aggregate_sha256": raw_aggregate,
                     "raw_aggregate_algorithm": "sha256(canonical_json(artifact_bundle.raw_files; sort_keys,separators=(',',':'),utf8))",
-                    "raw_files": raw_entries, "staged_artifact_sha256": _hash_path(staged),
+                    "raw_files": raw_entries, "raw_byte_inventory": raw_byte_inventory, "evidence_files": evidence_entries, "staged_artifact_sha256": _hash_path(staged),
                     "staged_rowset_sha256": staged_hash.hexdigest(), "normalized_artifact_sha256": _hash_path(normalized),
                     "source_normalized_rowset_sha256": source_hash.hexdigest(), "fact_normalization": {"version": FACT_NORMALIZATION_VERSION,
                     "description": "replace only source_key with pyramid_back_adjusted_20260714", "source_key": SOURCE_KEY,
