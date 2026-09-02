@@ -240,20 +240,23 @@ def _fetch_stock_history_frame(code: str, freq: str, start_dt: datetime, end_dt:
     return _call_mootdx("quotes.bars", _fetch_from_server)
 
 
-def _current_target_interval(effective_now: str) -> datetime:
+def _current_target_interval(effective_now: str, freq: str = "1m") -> datetime:
     parsed = datetime.fromisoformat(effective_now.replace("Z", "+00:00"))
     localized = parsed.replace(tzinfo=SHANGHAI) if parsed.tzinfo is None else parsed.astimezone(SHANGHAI)
-    return localized.replace(second=0, microsecond=0)
+    current_minute = localized.replace(second=0, microsecond=0)
+    if freq == "30m":
+        return current_minute.replace(minute=(current_minute.minute // 30) * 30)
+    return current_minute
 
 
-def _current_bar_from_frame(code: str, records: pd.DataFrame, target_interval: datetime) -> tuple[NativeCurrentStockBar | None, str]:
+def _current_bar_from_frame(code: str, records: pd.DataFrame, target_interval: datetime, freq: str = "1m") -> tuple[NativeCurrentStockBar | None, str]:
     # Mootdx's minute feed reports shares and CNY directly.  Do not apply the
     # history heuristic here: it can alter a valid single-Bar observation.
     frame = _normalize_history_frame(
         records,
         "code",
         normalize_stock_code(code),
-        "1m",
+        freq,
         calibrate_units=False,
     )
     if frame.empty:
@@ -293,10 +296,12 @@ def _current_bar_from_frame(code: str, records: pd.DataFrame, target_interval: d
     ), "ok"
 
 
-def get_current_stock_bars(codes: list[str], effective_now: str) -> CurrentStockBarsResult:
-    """Fetch native mutable 1-minute Bars directly from Mootdx without cache reuse."""
+def get_current_stock_bars(codes: list[str], effective_now: str, freq: str = "1m") -> CurrentStockBarsResult:
+    """Fetch native mutable 1m or 30m Bars directly from Mootdx without cache reuse."""
     _require_available()
-    target_interval = _current_target_interval(effective_now)
+    if freq not in {"1m", "30m"}:
+        raise ValueError(f"current Mootdx Bar frequency is unsupported: {freq}")
+    target_interval = _current_target_interval(effective_now, freq)
     attempts: list[CurrentBarNodeAttempt] = []
     bars: list[NativeCurrentStockBar] = []
     for code in codes:
@@ -310,13 +315,13 @@ def get_current_stock_bars(codes: list[str], effective_now: str) -> CurrentStock
                     client = Quotes.factory(market="std", server=server, bestip=False, timeout=8)
                     return client.bars(
                         symbol=normalized_code,
-                        frequency=MOOTDX_FREQ_MAP["1m"],
+                        frequency=MOOTDX_FREQ_MAP[freq],
                         start=0,
                         offset=MOOTDX_CURRENT_BAR_FETCH_COUNT,
                     )
 
-                records = call_provider_api("mootdx", "quotes.current_bar", _invoke)
-                bar, outcome = _current_bar_from_frame(normalized_code, records, target_interval)
+                records = call_provider_api("mootdx", f"quotes.current_bar.{freq}", _invoke)
+                bar, outcome = _current_bar_from_frame(normalized_code, records, target_interval, freq)
                 attempts.append(CurrentBarNodeAttempt(code=normalized_code, server=server_name, outcome=outcome))
                 if bar is not None:
                     bars.append(bar)
