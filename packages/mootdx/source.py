@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 import os
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -40,17 +42,47 @@ MOOTDX_FREQ_MAP = {
     "1mo": 6,
 }
 DEFAULT_SERVERS = (
+    ("180.153.18.172", 80),
     ("218.6.170.47", 7709),
     ("124.70.199.56", 7709),
-    ("180.153.18.172", 80),
 )
 MOOTDX_BAR_PAGE_SIZE = 800
+MOOTDX_CURRENT_BAR_FETCH_COUNT = 3
+SHANGHAI = ZoneInfo("Asia/Shanghai")
 INDEX_MEMBER_NAME_MAP = {
     "000016": "上证50",
     "000300": "沪深300",
     "000905": "中证500",
     "399300": "沪深300",
 }
+
+
+@dataclass(frozen=True)
+class CurrentBarNodeAttempt:
+    code: str
+    server: str
+    outcome: str
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class NativeCurrentStockBar:
+    code: str
+    interval_start: datetime
+    native_trade_time: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    amount: float
+    unit_conversion: str
+
+
+@dataclass(frozen=True)
+class CurrentStockBarsResult:
+    bars: tuple[NativeCurrentStockBar, ...]
+    attempts: tuple[CurrentBarNodeAttempt, ...]
 
 
 def _is_available() -> bool:
@@ -155,7 +187,14 @@ def _fetch_paged_bars(
     return pd.concat(pages, ignore_index=True)
 
 
-def _normalize_history_frame(records: pd.DataFrame, code_column: str, code_value: str, freq: str) -> pd.DataFrame:
+def _normalize_history_frame(
+    records: pd.DataFrame,
+    code_column: str,
+    code_value: str,
+    freq: str,
+    *,
+    calibrate_units: bool = True,
+) -> pd.DataFrame:
     if records is None or records.empty:
         return pd.DataFrame()
     work = records.copy()
@@ -178,7 +217,8 @@ def _normalize_history_frame(records: pd.DataFrame, code_column: str, code_value
     work["amount"] = pd.to_numeric(work["amount"], errors="coerce") if "amount" in work.columns else pd.NA
     work = work[[code_column, "trade_time", "freq", "open", "high", "low", "close", "volume", "amount"]]
     work = work.dropna(subset=["trade_time"])
-    work, _ = calibrate_quote_units(work)
+    if calibrate_units:
+        work, _ = calibrate_quote_units(work)
     return work.drop_duplicates(subset=[code_column, "trade_time", "freq"], keep="last").sort_values("trade_time").reset_index(drop=True)
 
 
@@ -198,6 +238,94 @@ def _fetch_stock_history_frame(code: str, freq: str, start_dt: datetime, end_dt:
         return filter_frame_by_datetime_range(frame, "trade_time", start_dt, end_dt)
 
     return _call_mootdx("quotes.bars", _fetch_from_server)
+
+
+def _current_target_interval(effective_now: str) -> datetime:
+    parsed = datetime.fromisoformat(effective_now.replace("Z", "+00:00"))
+    localized = parsed.replace(tzinfo=SHANGHAI) if parsed.tzinfo is None else parsed.astimezone(SHANGHAI)
+    return localized.replace(second=0, microsecond=0)
+
+
+def _current_bar_from_frame(code: str, records: pd.DataFrame, target_interval: datetime) -> tuple[NativeCurrentStockBar | None, str]:
+    # Mootdx's minute feed reports shares and CNY directly.  Do not apply the
+    # history heuristic here: it can alter a valid single-Bar observation.
+    frame = _normalize_history_frame(
+        records,
+        "code",
+        normalize_stock_code(code),
+        "1m",
+        calibrate_units=False,
+    )
+    if frame.empty:
+        return None, "empty"
+    target_naive = target_interval.replace(tzinfo=None)
+    exact = frame.loc[frame["trade_time"] == target_naive]
+    if exact.empty:
+        timestamps = pd.to_datetime(frame["trade_time"], errors="coerce")
+        if bool((timestamps > target_naive).any()):
+            return None, "future_dated"
+        return None, "wrong_interval"
+    row = exact.sort_values("trade_time").iloc[-1]
+    values = {name: row[name] for name in ("open", "high", "low", "close", "volume", "amount")}
+    if any(pd.isna(value) for value in values.values()):
+        return None, "malformed"
+    open_price, high_price, low_price, close_price = (float(values[name]) for name in ("open", "high", "low", "close"))
+    volume = float(values["volume"])
+    amount = float(values["amount"])
+    if high_price < max(open_price, close_price) or low_price > min(open_price, close_price) or volume < 0 or amount < 0:
+        return None, "malformed"
+    native_row = records.loc[pd.to_datetime(records.get("datetime", records.index), errors="coerce") == target_naive]
+    native_volume = pd.to_numeric(native_row.get("volume", native_row.get("vol")), errors="coerce").dropna()
+    native_amount = pd.to_numeric(native_row.get("amount"), errors="coerce").dropna()
+    volume_factor = volume / float(native_volume.iloc[-1]) if not native_volume.empty and float(native_volume.iloc[-1]) else 1.0
+    amount_factor = amount / float(native_amount.iloc[-1]) if not native_amount.empty and float(native_amount.iloc[-1]) else 1.0
+    return NativeCurrentStockBar(
+        code=normalize_stock_code(code),
+        interval_start=target_interval,
+        native_trade_time=target_naive.strftime("%Y-%m-%d %H:%M:%S"),
+        open=open_price,
+        high=high_price,
+        low=low_price,
+        close=close_price,
+        volume=int(volume),
+        amount=amount,
+        unit_conversion=f"mootdx:volume*{volume_factor:g},amount*{amount_factor:g}",
+    ), "ok"
+
+
+def get_current_stock_bars(codes: list[str], effective_now: str) -> CurrentStockBarsResult:
+    """Fetch native mutable 1-minute Bars directly from Mootdx without cache reuse."""
+    _require_available()
+    target_interval = _current_target_interval(effective_now)
+    attempts: list[CurrentBarNodeAttempt] = []
+    bars: list[NativeCurrentStockBar] = []
+    for code in codes:
+        normalized_code = normalize_stock_code(code)
+        if normalized_code == "":
+            continue
+        for server in _resolve_servers():
+            server_name = f"{server[0]}:{server[1]}"
+            try:
+                def _invoke() -> pd.DataFrame:
+                    client = Quotes.factory(market="std", server=server, bestip=False, timeout=8)
+                    return client.bars(
+                        symbol=normalized_code,
+                        frequency=MOOTDX_FREQ_MAP["1m"],
+                        start=0,
+                        offset=MOOTDX_CURRENT_BAR_FETCH_COUNT,
+                    )
+
+                records = call_provider_api("mootdx", "quotes.current_bar", _invoke)
+                bar, outcome = _current_bar_from_frame(normalized_code, records, target_interval)
+                attempts.append(CurrentBarNodeAttempt(code=normalized_code, server=server_name, outcome=outcome))
+                if bar is not None:
+                    bars.append(bar)
+                    break
+            except TimeoutError as exc:
+                attempts.append(CurrentBarNodeAttempt(code=normalized_code, server=server_name, outcome="timeout", detail=str(exc)))
+            except Exception as exc:
+                attempts.append(CurrentBarNodeAttempt(code=normalized_code, server=server_name, outcome="error", detail=str(exc)))
+    return CurrentStockBarsResult(bars=tuple(bars), attempts=tuple(attempts))
 
 
 def _fetch_index_history_frame(index_code: str, freq: str, start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
