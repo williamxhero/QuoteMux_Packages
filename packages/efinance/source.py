@@ -1,6 +1,8 @@
 ﻿from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -44,6 +46,42 @@ EFINANCE_ADJUST_MAP = {
     "hfq": 2,
 }
 DEFAULT_LOOKBACK_DAYS = 30
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+@dataclass(frozen=True)
+class CurrentStockPriceSnapshot:
+    code: str
+    price: float
+    source_time: str
+
+
+def _snapshot_timestamp(value: object, effective_now: datetime) -> str:
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return ""
+    current = parsed.to_pydatetime()
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=SHANGHAI)
+    return current.astimezone(SHANGHAI).isoformat()
+
+
+def get_current_stock_price_snapshots(codes: list[str], effective_now: str) -> list[CurrentStockPriceSnapshot]:
+    """Fetch eFinance's realtime snapshot solely for independent price validation."""
+    parsed_now = datetime.fromisoformat(effective_now.replace("Z", "+00:00"))
+    result = _call_ef("stock.get_realtime_quotes", ef.stock.get_realtime_quotes, None)
+    if result is None or result.empty:
+        return []
+    requested = {normalize_stock_code(code) for code in codes if normalize_stock_code(code)}
+    snapshots: list[CurrentStockPriceSnapshot] = []
+    for _, row in result.iterrows():
+        code = normalize_stock_code(str(row.get("代码", "")))
+        price = _float_value(row.get("最新价", row.get("收盘")))
+        if code not in requested or price is None or price <= 0:
+            continue
+        source_time = _snapshot_timestamp(row.get("更新时间", row.get("最新交易日")), parsed_now)
+        snapshots.append(CurrentStockPriceSnapshot(code=code, price=price, source_time=source_time))
+    return sorted(snapshots, key=lambda item: item.code)
 
 
 def _is_available() -> bool:

@@ -100,6 +100,7 @@
   "secret_fields": [],
   "supports_multi_instance": true,
   "handler_targets": {
+    "get_current_stock_price_snapshots": "quotemux_packages.efinance.source:get_current_stock_price_snapshots",
     "get_concept_quotes": "quotemux_packages.efinance.source:get_concept_quotes",
     "get_dragon_tiger": "quotemux_packages.efinance.source:get_dragon_tiger",
     "get_etf_daily_quotes": "quotemux_packages.efinance.etfs:get_etf_daily_quotes",
