@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import lru_cache
 from threading import local
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -37,6 +39,35 @@ DEFAULT_LOOKBACK_DAYS = 10
 MINUTES_PER_TRADE_DAY = 242
 DAILY_FREQS = {"1d", "1w", "1mo"}
 _CLIENT_STATE = local()
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+@dataclass(frozen=True)
+class CurrentBarNodeAttempt:
+    code: str
+    server: str
+    outcome: str
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class NativeCurrentStockBar:
+    code: str
+    interval_start: datetime
+    native_trade_time: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    amount: float
+    unit_conversion: str
+
+
+@dataclass(frozen=True)
+class CurrentStockBarsResult:
+    bars: tuple[NativeCurrentStockBar, ...]
+    attempts: tuple[CurrentBarNodeAttempt, ...]
 
 
 def _is_available() -> bool:
@@ -107,6 +138,11 @@ def _call_tdx(api_name: str, func, *args, **kwargs):
     if client is None:
         # provider worker 内按线程复用连接，避免全市场补采为每只股票重复登录公共节点。
         client = _client_factory()()
+        enter = getattr(client, "__enter__", None)
+        if callable(enter):
+            connected = enter()
+            if connected is not None:
+                client = connected
         _CLIENT_STATE.client = client
 
     def _invoke():
@@ -120,6 +156,55 @@ def _call_tdx(api_name: str, func, *args, **kwargs):
         finally:
             _CLIENT_STATE.client = None
         raise
+
+
+def _current_target_interval(effective_now: str) -> datetime:
+    parsed = datetime.fromisoformat(effective_now.replace("Z", "+00:00"))
+    localized = parsed.replace(tzinfo=SHANGHAI) if parsed.tzinfo is None else parsed.astimezone(SHANGHAI)
+    return localized.replace(second=0, microsecond=0)
+
+
+def get_current_stock_bars(codes: list[str], effective_now: str) -> CurrentStockBarsResult:
+    """Return only complete native OHLCVA Bars for the requested current minute."""
+    _require_available()
+    target_interval = _current_target_interval(effective_now)
+    target_naive = target_interval.replace(tzinfo=None)
+    bars: list[NativeCurrentStockBar] = []
+    attempts: list[CurrentBarNodeAttempt] = []
+    for code in codes:
+        normalized = normalize_stock_code(code)
+        if normalized == "":
+            continue
+        try:
+            frame = _fetch_stock_intraday_frame(normalized, target_naive, target_naive, "none")
+            if frame.empty:
+                attempts.append(CurrentBarNodeAttempt(normalized, "opentdx", "empty"))
+                continue
+            exact = frame.loc[frame["trade_time"] == target_naive]
+            if exact.empty:
+                attempts.append(CurrentBarNodeAttempt(normalized, "opentdx", "wrong_interval"))
+                continue
+            row = exact.sort_values("trade_time").iloc[-1]
+            values = {name: row[name] for name in ("open", "high", "low", "close", "volume", "amount")}
+            if any(pd.isna(value) for value in values.values()):
+                attempts.append(CurrentBarNodeAttempt(normalized, "opentdx", "malformed"))
+                continue
+            open_price, high_price, low_price, close_price = (float(values[name]) for name in ("open", "high", "low", "close"))
+            volume, amount = int(values["volume"]), float(values["amount"])
+            if high_price < max(open_price, close_price) or low_price > min(open_price, close_price) or volume < 0 or amount < 0:
+                attempts.append(CurrentBarNodeAttempt(normalized, "opentdx", "malformed"))
+                continue
+            bars.append(NativeCurrentStockBar(
+                code=normalized, interval_start=target_interval, native_trade_time=target_naive.strftime("%Y-%m-%d %H:%M:%S"),
+                open=open_price, high=high_price, low=low_price, close=close_price, volume=volume, amount=amount,
+                unit_conversion="opentdx:volume*1,amount*1",
+            ))
+            attempts.append(CurrentBarNodeAttempt(normalized, "opentdx", "ok"))
+        except TimeoutError as exc:
+            attempts.append(CurrentBarNodeAttempt(normalized, "opentdx", "timeout", str(exc)))
+        except Exception as exc:
+            attempts.append(CurrentBarNodeAttempt(normalized, "opentdx", "error", str(exc)))
+    return CurrentStockBarsResult(tuple(bars), tuple(attempts))
 
 
 def _fetch_stock_intraday_frame(code: str, start_dt: datetime, end_dt: datetime, adjust: str) -> pd.DataFrame:

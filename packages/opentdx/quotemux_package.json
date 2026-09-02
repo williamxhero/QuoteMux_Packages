@@ -52,6 +52,7 @@
   "secret_fields": [],
   "supports_multi_instance": true,
   "handler_targets": {
+    "get_current_stock_bars": "quotemux_packages.opentdx.source:get_current_stock_bars",
     "get_index_quotes": "quotemux_packages.opentdx.source:get_index_quotes",
     "get_stock_quotes": "quotemux_packages.opentdx.source:get_stock_quotes"
   },
