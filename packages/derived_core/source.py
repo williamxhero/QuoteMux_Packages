@@ -6,6 +6,39 @@ from platform_models import BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem,
 from quotemux.infra.common import normalize_stock_code
 
 
+class CurrentPeriodDataIncomplete(ValueError):
+    """An elapsed source minute lacks a durable Bar or authoritative no-trade evidence."""
+
+
+def derive_current_stock_bar_30m(code: str, expected_interval_starts: list[str], minute_bars: list[dict[str, object]]) -> dict[str, object]:
+    """Derive one mutable 30m Bar only from a complete elapsed 1m prefix."""
+    normalized_code = normalize_stock_code(code)
+    if normalized_code == "" or expected_interval_starts == []:
+        raise CurrentPeriodDataIncomplete("current 30m Bar has no expected elapsed minutes")
+    by_start = {str(item.get("interval_start", "")): item for item in minute_bars}
+    missing = [start for start in expected_interval_starts if start not in by_start]
+    if missing:
+        raise CurrentPeriodDataIncomplete(f"current 30m Bar has unexplained elapsed minutes: {','.join(missing)}")
+    selected = [by_start[start] for start in expected_interval_starts]
+    try:
+        opens = [float(item["open"]) for item in selected]
+        highs = [float(item["high"]) for item in selected]
+        lows = [float(item["low"]) for item in selected]
+        closes = [float(item["close"]) for item in selected]
+        volumes = [int(float(item["volume"])) for item in selected]
+        amounts = [float(item["amount"]) for item in selected]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CurrentPeriodDataIncomplete("current 30m Bar has malformed elapsed 1m inputs") from exc
+    if any(volume < 0 for volume in volumes) or any(amount < 0 for amount in amounts):
+        raise CurrentPeriodDataIncomplete("current 30m Bar has invalid elapsed 1m inputs")
+    return {
+        "code": normalized_code,
+        "interval_start": expected_interval_starts[0],
+        "open": opens[0], "high": max(highs), "low": min(lows), "close": closes[-1],
+        "volume": sum(volumes), "amount": sum(amounts), "source_semantics": "derived",
+    }
+
+
 BOARD_STOCK_INDUSTRY_MAP = {
     "BK1326": "半导体",
     "BK1327": "元器件",
