@@ -254,3 +254,4 @@ def test_current_stock_bar_can_use_mootdx_native_30m_frequency(monkeypatch) -> N
     assert result.bars[0].interval_start.isoformat() == "2026-09-02T13:30:00+08:00"
     assert (result.bars[0].high, result.bars[0].close, result.bars[0].volume) == (1403.0, 1402.5, 350)
     assert current_client.frequency == source.MOOTDX_FREQ_MAP["30m"]
+    assert current_client.calls == [(0, 800)]

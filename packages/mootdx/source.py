@@ -47,7 +47,9 @@ DEFAULT_SERVERS = (
     ("124.70.199.56", 7709),
 )
 MOOTDX_BAR_PAGE_SIZE = 800
-MOOTDX_CURRENT_BAR_FETCH_COUNT = 3
+# Keep one provider page so recovery can refetch a completed Bar even when the
+# minute-level recovery timer was unavailable for several trading sessions.
+MOOTDX_CURRENT_BAR_FETCH_COUNT = MOOTDX_BAR_PAGE_SIZE
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 INDEX_MEMBER_NAME_MAP = {
     "000016": "上证50",
