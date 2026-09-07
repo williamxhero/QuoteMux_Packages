@@ -20,6 +20,13 @@
       "notes": "使用 stock_kline 获取股票日线"
     },
     {
+      "capability_id": "stocks.quotes.daily_snapshot",
+      "support_level": "native",
+      "handler_name": "get_stock_quotes",
+      "mergeable": true,
+      "notes": "OpenTDX fills only explicitly missing codes from the market snapshot."
+    },
+    {
       "capability_id": "stocks.quotes.intraday",
       "support_level": "native",
       "handler_name": "get_stock_quotes",
