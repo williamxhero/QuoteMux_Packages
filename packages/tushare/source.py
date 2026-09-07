@@ -238,7 +238,7 @@ def get_stock_catalog(codes: list[str], name: str, exchange: str, list_status: s
                 list_date=format_date_value(row["list_date"]),
                 delist_date=format_date_value(row["delist_date"]),
                 industry=str(row["industry"] or ""),
-                listing_board=str(row["market2"] or ""),
+                listing_board=_stock_listing_board(str(row["code"]), str(row["exchange"]), str(row["market2"] or "")),
                 area=str(row["area"] or ""),
             )
         )
@@ -661,6 +661,19 @@ def get_industry_catalog(level: str, source: str, limit: int, offset: int) -> li
             )
         )
     return items
+
+
+def _stock_listing_board(code: str, exchange: str, provider_market: str) -> str:
+    value = provider_market.strip()
+    if value != "":
+        return value
+    normalized_code = normalize_stock_code(code).zfill(6)
+    normalized_exchange = exchange.strip().upper()
+    if normalized_exchange in {"BSE", "BJSE"}:
+        return "北交所"
+    if (normalized_exchange in {"SSE", "SHSE"} and normalized_code.startswith("900")) or (normalized_exchange in {"SZSE"} and normalized_code.startswith("200")):
+        return "B股"
+    return ""
 
 
 def get_adj_factor_snapshot(trade_date: str) -> list[AdjFactorItem]:
