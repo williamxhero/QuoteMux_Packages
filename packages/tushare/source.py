@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from functools import lru_cache
 import math
+import re
 import threading
 
 import pandas as pd
@@ -44,6 +45,17 @@ TS_FREQ_MAP = {
 }
 TS_INDEX_MARKETS = ("CSI", "SSE", "SZSE", "SW", "CICC", "OTH")
 TS_STOCK_LIST_STATUS = ("L", "D", "P")
+STOCK_BASIC_COLUMNS = (
+    "ts_code",
+    "symbol",
+    "name",
+    "area",
+    "industry",
+    "market",
+    "list_date",
+    "delist_date",
+    "list_status",
+)
 _PRO_BAR_TOKEN_LOCK = threading.Lock()
 DEFAULT_TUSHARE_REQUEST_TIMEOUT_SECONDS = 10.0
 
@@ -138,9 +150,11 @@ def _name_indicates_st(name: str) -> bool:
     return upper_name.startswith("ST") or upper_name.startswith("*ST")
 
 
-def _fetch_stock_basic_frame(status: str) -> pd.DataFrame:
+def _fetch_stock_basic_frame(status: str, *, strict: bool = False) -> pd.DataFrame:
     pro = get_ts_pro()
     if pro is None:
+        if strict:
+            raise RuntimeError("Tushare stock_basic client is unavailable")
         return pd.DataFrame()
     try:
         df = call_tushare_api(
@@ -148,16 +162,37 @@ def _fetch_stock_basic_frame(status: str) -> pd.DataFrame:
             pro.stock_basic,
             exchange="",
             list_status=status,
-            fields="ts_code,symbol,name,area,industry,market,list_date,delist_date,list_status",
+            fields=",".join(STOCK_BASIC_COLUMNS),
         )
     except Exception:
+        if strict:
+            raise
         return pd.DataFrame()
-    if df is None or df.empty:
+    if df is None:
+        if strict:
+            raise RuntimeError(f"Tushare stock_basic returned None for status={status}")
+        return pd.DataFrame()
+    missing_columns = sorted(set(STOCK_BASIC_COLUMNS) - set(df.columns))
+    if strict and missing_columns:
+        raise RuntimeError(
+            "Tushare stock_basic response is missing columns: " + ", ".join(missing_columns)
+        )
+    if df.empty:
         return pd.DataFrame()
     work = df.copy()
-    for column in ["ts_code", "symbol", "name", "area", "industry", "market", "list_date", "delist_date", "list_status"]:
+    for column in STOCK_BASIC_COLUMNS:
         if column not in work.columns:
             work[column] = ""
+    symbols = work["symbol"].fillna("").astype(str).str.strip()
+    ts_codes = work["ts_code"].fillna("").astype(str).str.strip().str.upper()
+    canonical_identity = [
+        re.fullmatch(r"[0-9]{6}", symbol, flags=re.ASCII) is not None
+        and ts_code in {f"{symbol}.SH", f"{symbol}.SZ", f"{symbol}.BJ"}
+        for symbol, ts_code in zip(symbols, ts_codes, strict=True)
+    ]
+    work["symbol"] = symbols
+    work["ts_code"] = ts_codes
+    work = work.loc[canonical_identity].copy()
     work["code"] = work["symbol"].fillna("").astype(str).str.zfill(6)
     work["exchange"] = work["ts_code"].map(_stock_exchange_from_ts_code)
     work["market2"] = work.apply(lambda row: _stock_market_from_row(str(row["market"]), str(row["exchange"]), str(row["code"])), axis=1)
@@ -169,7 +204,7 @@ def _load_stock_basic_frame(status: str, refresh: bool = False) -> pd.DataFrame:
     cache_path = build_cache_path("tushare", ["stocks", "catalog"], {"status": status})
     cache_df = read_cache_frame(cache_path)
     if refresh:
-        fetched_df = _fetch_stock_basic_frame(status)
+        fetched_df = _fetch_stock_basic_frame(status, strict=True)
         if fetched_df.empty:
             return fetched_df
         write_cache_frame(cache_path, fetched_df)
@@ -207,7 +242,7 @@ def _apply_bse_code_mappings(frame: pd.DataFrame, mappings: list[BSECodeMappingI
 def get_stock_catalog(codes: list[str], name: str, exchange: str, list_status: str, include_delisted: bool, limit: int, offset: int, refresh: bool = False) -> list[StockBasicInfo]:
     statuses = _stock_statuses(list_status, include_delisted)
     frames = [_load_stock_basic_frame(status, refresh) for status in statuses]
-    if refresh and include_delisted and statuses == TS_STOCK_LIST_STATUS and (frames[0].empty or frames[1].empty):
+    if refresh and include_delisted and statuses == TS_STOCK_LIST_STATUS and frames[0].empty:
         return []
     frames = [frame for frame in frames if not frame.empty]
     if frames == []:
