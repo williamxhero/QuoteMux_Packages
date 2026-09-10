@@ -106,6 +106,7 @@
   "secret_fields": [],
   "supports_multi_instance": false,
   "handler_targets": {
+    "derive_current_stock_bar_30m": "quotemux_packages.derived_core.source:derive_current_stock_bar_30m",
     "get_hl_signal": "quotemux_packages.derived_core.source:get_hl_signal",
     "get_nine_turn": "quotemux_packages.derived_core.source:get_nine_turn",
     "get_concept_money_flow": "quotemux_packages.derived_core.source:get_concept_money_flow",

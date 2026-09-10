@@ -179,3 +179,79 @@ def test_server_without_requested_date_is_polled_before_using_next_server(monkey
     assert shallow_client.calls == [(0, 242)]
     assert deep_client.calls == [(0, 242)]
     assert result["trade_time"].dt.strftime("%Y-%m-%d %H:%M:%S").tolist() == ["2026-07-19 15:00:00"]
+
+
+def test_current_stock_bar_uses_only_the_exact_target_minute_and_records_node_attempts(monkeypatch) -> None:
+    stale_client = _SinglePageClient(_bar("2026-09-02 13:29:00"))
+    current_client = _SinglePageClient(
+        pd.DataFrame(
+            [
+                {
+                    "datetime": "2026-09-02 13:30:00",
+                    "open": 1400.0,
+                    "high": 1401.0,
+                    "low": 1399.0,
+                    "close": 1400.5,
+                    "vol": 1200,
+                    "amount": 1_680_600.0,
+                }
+            ]
+        )
+    )
+    clients = {("stale", 1): stale_client, ("current", 2): current_client}
+
+    class _Quotes:
+        @staticmethod
+        def factory(*, market: str, server: tuple[str, int], bestip: bool, timeout: int):
+            del market, bestip, timeout
+            return clients[server]
+
+    monkeypatch.setattr(source, "Quotes", _Quotes)
+    monkeypatch.setattr(source, "_resolve_servers", lambda: list(clients))
+    monkeypatch.setattr(source, "call_provider_api", lambda provider, api_name, invoke: invoke())
+
+    result = source.get_current_stock_bars(["600519"], "2026-09-02T13:30:08+08:00")
+
+    assert len(result.bars) == 1
+    bar = result.bars[0]
+    assert bar.code == "600519"
+    assert bar.interval_start.isoformat() == "2026-09-02T13:30:00+08:00"
+    assert (bar.open, bar.high, bar.low, bar.close, bar.volume, bar.amount) == (1400.0, 1401.0, 1399.0, 1400.5, 1200, 1_680_600.0)
+    assert bar.unit_conversion == "mootdx:volume*1,amount*1"
+    assert [(attempt.server, attempt.outcome) for attempt in result.attempts] == [
+        ("stale:1", "wrong_interval"),
+        ("current:2", "ok"),
+    ]
+
+
+def test_current_stock_bar_can_use_mootdx_native_30m_frequency(monkeypatch) -> None:
+    class _ThirtyMinuteClient(_SinglePageClient):
+        def bars(self, *, symbol: str, frequency: int, start: int = 0, offset: int = 800) -> pd.DataFrame:
+            self.frequency = frequency
+            return super().bars(symbol=symbol, frequency=frequency, start=start, offset=offset)
+
+    current_client = _ThirtyMinuteClient(
+        pd.DataFrame(
+            [{
+                "datetime": "2026-09-02 13:30:00", "open": 1400.0, "high": 1403.0,
+                "low": 1399.0, "close": 1402.5, "vol": 350, "amount": 490555.0,
+            }]
+        )
+    )
+
+    class _Quotes:
+        @staticmethod
+        def factory(*, market: str, server: tuple[str, int], bestip: bool, timeout: int):
+            del market, server, bestip, timeout
+            return current_client
+
+    monkeypatch.setattr(source, "Quotes", _Quotes)
+    monkeypatch.setattr(source, "_resolve_servers", lambda: [("current", 2)])
+    monkeypatch.setattr(source, "call_provider_api", lambda provider, api_name, invoke: invoke())
+
+    result = source.get_current_stock_bars(["600519"], "2026-09-02T13:32:08+08:00", "30m")
+
+    assert result.bars[0].interval_start.isoformat() == "2026-09-02T13:30:00+08:00"
+    assert (result.bars[0].high, result.bars[0].close, result.bars[0].volume) == (1403.0, 1402.5, 350)
+    assert current_client.frequency == source.MOOTDX_FREQ_MAP["30m"]
+    assert current_client.calls == [(0, 800)]

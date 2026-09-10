@@ -1,9 +1,9 @@
 {
   "package_id": "shinny_edb",
-  "version": "2026.8.12",
+  "version": "2026.8.25",
   "source_name": "shinny_edb",
   "display_name": "信易 EDB",
-  "description": "信易科技 EDB Data Services 免 token 近一年期货分钟线。",
+  "description": "信易科技 EDB Data Services 免 token 近一年期货分钟线；可在 repair workflow 中只读捕获显式真实合约。",
   "capabilities": [
     {
       "capability_id": "futures.quotes.main_continuous.1m",

@@ -238,7 +238,7 @@ def get_stock_catalog(codes: list[str], name: str, exchange: str, list_status: s
                 list_date=format_date_value(row["list_date"]),
                 delist_date=format_date_value(row["delist_date"]),
                 industry=str(row["industry"] or ""),
-                listing_board=str(row["market2"] or ""),
+                listing_board=_stock_listing_board(str(row["code"]), str(row["exchange"]), str(row["market2"] or "")),
                 area=str(row["area"] or ""),
             )
         )
@@ -663,6 +663,19 @@ def get_industry_catalog(level: str, source: str, limit: int, offset: int) -> li
     return items
 
 
+def _stock_listing_board(code: str, exchange: str, provider_market: str) -> str:
+    value = provider_market.strip()
+    if value != "":
+        return value
+    normalized_code = normalize_stock_code(code).zfill(6)
+    normalized_exchange = exchange.strip().upper()
+    if normalized_exchange in {"BSE", "BJSE"}:
+        return "北交所"
+    if (normalized_exchange in {"SSE", "SHSE"} and normalized_code.startswith("900")) or (normalized_exchange in {"SZSE"} and normalized_code.startswith("200")):
+        return "B股"
+    return ""
+
+
 def get_adj_factor_snapshot(trade_date: str) -> list[AdjFactorItem]:
     """Return the provider-native full-market adjustment-factor snapshot."""
     pro = get_ts_pro()
@@ -867,19 +880,14 @@ def get_board_quotes(board_codes: list[str], freq: str, trade_date: str, start_d
 
 
 def get_board_daily_money_flow_snapshot(trade_date: str, scope: str, limit: int, offset: int) -> list[BoardMoneyFlowItem]:
+    actual_trade_date = format_date_value(trade_date)
+    if actual_trade_date == "":
+        return []
     scopes = [scope] if scope in {"industry", "concept"} else ["concept", "industry"]
     items: list[BoardMoneyFlowItem] = []
-    target_count = limit + offset
     for current_scope in scopes:
-        catalog_items = get_board_catalog(current_scope, "a_share", "active", 10000, 0)
-        if current_scope == "industry":
-            catalog_items = [item for item in catalog_items if item.board_code.startswith("881")]
-        for catalog_item in catalog_items:
-            items.extend(get_board_money_flow(catalog_item.board_code, trade_date, "", "", current_scope))
-            if len(items) >= target_count:
-                break
-        if len(items) >= target_count:
-            break
+        frame = _fetch_board_money_flow_snapshot_frame(actual_trade_date, current_scope)
+        items.extend(_board_money_flow_items_from_frame(frame))
     return sorted(items, key=lambda item: (item.board_code, item.trade_date))[offset: offset + limit]
 
 
@@ -1716,6 +1724,24 @@ def board_code_to_ts(board_code: str) -> str:
     return f"{text}.TI"
 
 
+def _board_money_flow_frame_from_raw(frame: pd.DataFrame, scope: str) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    work = frame.copy()
+    code_column = "ts_code" if "ts_code" in work.columns else "code"
+    if code_column not in work.columns or "trade_date" not in work.columns:
+        return pd.DataFrame()
+    work["board_code"] = work[code_column].astype(str).str.split(".").str[0]
+    work["trade_date"] = work["trade_date"].map(lambda value: format_date_value(str(value)))
+    work["scope"] = scope
+    # Tushare's THS board money-flow contract publishes these three amounts in
+    # 100-million-yuan units, which is also QuoteMux's board/concept unit.
+    work["inflow"] = pd.to_numeric(_first_existing_column(work, ("net_buy_amount", "buy_amount", "buy_elg_amount")), errors="coerce")
+    work["outflow"] = pd.to_numeric(_first_existing_column(work, ("net_sell_amount", "sell_amount", "sell_elg_amount")), errors="coerce")
+    work["net_inflow"] = pd.to_numeric(_first_existing_column(work, ("net_amount", "net_buy", "net_mf_amount", "net_inflow")), errors="coerce")
+    return work[["board_code", "trade_date", "scope", "inflow", "outflow", "net_inflow"]]
+
+
 def _fetch_board_money_flow_frame(board_code: str, start_value: str, end_value: str, scope: str) -> pd.DataFrame:
     pro = get_ts_pro()
     if pro is None:
@@ -1728,16 +1754,38 @@ def _fetch_board_money_flow_frame(board_code: str, start_value: str, end_value: 
         df = call_tushare_api(fetch_name, fetcher, ts_code=board_code_to_ts(board_code), start_date=start_value, end_date=end_value)
     except Exception:
         return pd.DataFrame()
-    if df is None or df.empty:
+    return _board_money_flow_frame_from_raw(df, scope)
+
+
+def _fetch_board_money_flow_snapshot_frame(trade_date: str, scope: str) -> pd.DataFrame:
+    pro = get_ts_pro()
+    if pro is None:
         return pd.DataFrame()
-    work = df.copy()
-    code_column = "ts_code" if "ts_code" in work.columns else "code"
-    work["board_code"] = work[code_column].astype(str).str.split(".").str[0]
-    work["scope"] = scope
-    work["inflow"] = _amount_wan_to_yuan(_first_existing_column(work, ("net_buy_amount", "buy_amount", "buy_elg_amount")))
-    work["outflow"] = _amount_wan_to_yuan(_first_existing_column(work, ("net_sell_amount", "sell_amount", "sell_elg_amount")))
-    work["net_inflow"] = _amount_wan_to_yuan(_first_existing_column(work, ("net_amount", "net_buy", "net_mf_amount", "net_inflow")))
-    return work[["board_code", "trade_date", "scope", "inflow", "outflow", "net_inflow"]]
+    fetch_name = "moneyflow_ind_ths" if scope == "industry" else "moneyflow_cnt_ths"
+    fetcher = getattr(pro, fetch_name, None)
+    if fetcher is None:
+        return pd.DataFrame()
+    try:
+        frame = call_tushare_api(fetch_name, fetcher, trade_date=_to_tushare_date(trade_date))
+    except Exception:
+        return pd.DataFrame()
+    return _board_money_flow_frame_from_raw(frame, scope)
+
+
+def _board_money_flow_items_from_frame(frame: pd.DataFrame) -> list[BoardMoneyFlowItem]:
+    if frame.empty:
+        return []
+    return [
+        BoardMoneyFlowItem(
+            board_code=str(row["board_code"]),
+            trade_date=str(row["trade_date"]),
+            scope=str(row["scope"]),
+            inflow=float(row["inflow"]) if pd.notna(row["inflow"]) else None,
+            outflow=float(row["outflow"]) if pd.notna(row["outflow"]) else None,
+            net_inflow=float(row["net_inflow"]) if pd.notna(row["net_inflow"]) else None,
+        )
+        for _, row in frame.sort_values(["board_code", "trade_date"]).iterrows()
+    ]
 
 
 def get_board_money_flow(board_code: str, trade_date: str, start_date: str, end_date: str, scope: str) -> list[BoardMoneyFlowItem]:
