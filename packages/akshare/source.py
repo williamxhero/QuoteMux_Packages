@@ -612,8 +612,38 @@ def get_index_members(index_code: str, trade_date: str) -> list[IndexMemberItem]
     return items
 
 
+def _complete_historical_calendar(
+    open_days: pd.DataFrame,
+    exchange: str,
+    start_date: str,
+    end_date: str,
+) -> pd.DataFrame:
+    filtered = filter_frame_by_date_range(open_days, "trade_date", start_date, end_date)
+    if open_days.empty or start_date == "" or end_date == "":
+        return filtered.assign(is_open="1") if not filtered.empty else filtered
+    start = pd.Timestamp(start_date).normalize()
+    end = pd.Timestamp(end_date).normalize()
+    available = pd.to_datetime(open_days["trade_date"], errors="coerce").dropna().dt.normalize()
+    if available.empty:
+        return filtered
+    coverage_start = available.min() - pd.Timedelta(days=14)
+    coverage_end = min(available.max() + pd.Timedelta(days=14), pd.Timestamp.now().normalize())
+    if start < coverage_start or end > coverage_end:
+        return filtered.assign(is_open="1") if not filtered.empty else filtered
+    open_dates = {item.date() for item in available if start <= item <= end}
+    return pd.DataFrame(
+        [
+            {
+                "exchange": exchange,
+                "trade_date": day.strftime("%Y-%m-%d"),
+                "is_open": "1" if day.date() in open_dates else "0",
+            }
+            for day in pd.date_range(start, end, freq="D")
+        ]
+    )
+
+
 def get_trading_calendar(exchange: str, start_date: str, end_date: str, is_open: bool | None) -> list[TradingCalendarItem]:
-    del is_open
     if exchange not in {"SSE", "SZSE", "BSE"}:
         return []
     cache_path = build_cache_path("akshare", ["markets", "calendar", "trading"], {"exchange": exchange.lower()})
@@ -623,9 +653,11 @@ def get_trading_calendar(exchange: str, start_date: str, end_date: str, is_open:
         if fetched_df is not None and not fetched_df.empty:
             cache_df = fetched_df.copy()
             write_cache_frame(cache_path, cache_df)
-    filtered_df = filter_frame_by_date_range(cache_df, "trade_date", start_date, end_date)
+    filtered_df = _complete_historical_calendar(cache_df, exchange, start_date, end_date)
     if filtered_df.empty:
         return []
+    if is_open is not None:
+        filtered_df = filtered_df[filtered_df["is_open"].astype(str) == ("1" if is_open else "0")]
     items: list[TradingCalendarItem] = []
     for _, row in filtered_df.iterrows():
         trade_date_value = format_date_value(row["trade_date"])
@@ -633,7 +665,7 @@ def get_trading_calendar(exchange: str, start_date: str, end_date: str, is_open:
             TradingCalendarItem(
                 exchange=exchange,
                 trade_date=trade_date_value,
-                is_open=True,
+                is_open=str(row["is_open"]) in {"1", "True", "true"},
                 pretrade_date="",
             )
         )
