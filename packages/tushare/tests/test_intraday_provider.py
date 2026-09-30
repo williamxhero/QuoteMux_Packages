@@ -12,7 +12,7 @@ def test_stk_mins_rate_limit_matches_provider_quota(monkeypatch) -> None:
     try:
         limiter = rate_limit.get_tushare_api_rate_limiter("stk_mins")
         assert limiter._max_calls_per_minute == 1
-        assert limiter._period_seconds == 60.0
+        assert limiter._period_seconds == 3600.0
     finally:
         rate_limit.get_tushare_api_rate_limiter.cache_clear()
 
