@@ -53,10 +53,11 @@ class RateLimitStats:
 
 
 class TushareRateLimiter:
-    def __init__(self, max_calls_per_minute: int, period_seconds: float = RATE_LIMIT_PERIOD_SECONDS, state_key: str = "") -> None:
+    def __init__(self, max_calls_per_minute: int, period_seconds: float = RATE_LIMIT_PERIOD_SECONDS, state_key: str = "", max_wait_seconds: float | None = None) -> None:
         self._max_calls_per_minute = max_calls_per_minute
         self._period_seconds = period_seconds
         self._state_key = state_key
+        self._max_wait_seconds = max_wait_seconds
         self._lock = threading.Lock()
         self._call_times: deque[float] = deque()
         self._total_calls = 0
@@ -78,6 +79,7 @@ class TushareRateLimiter:
     def _wait_for_slot(self) -> None:
         if self._max_calls_per_minute <= 0:
             return
+        deadline = None if self._max_wait_seconds is None else time.monotonic() + max(0.0, self._max_wait_seconds)
         while True:
             wait_seconds = 0.0
             with self._lock:
@@ -93,6 +95,10 @@ class TushareRateLimiter:
                 self._throttle_count += 1
                 self._total_wait_seconds += wait_seconds
             if wait_seconds > 0:
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if wait_seconds > remaining:
+                        raise TimeoutError(f"tushare.{self._state_key} rate limit unavailable for {wait_seconds:.1f}s")
                 time.sleep(wait_seconds)
 
     def _clean_old_calls(self, now: float) -> None:
@@ -157,7 +163,8 @@ def get_tushare_api_rate_limiter(api_name: str) -> TushareRateLimiter:
     default_calls, default_period = DEFAULT_API_RATE_LIMITS.get(api_name, (DEFAULT_MAX_CALLS_PER_MINUTE, RATE_LIMIT_PERIOD_SECONDS))
     max_calls = _int_env(_api_rate_env_name(api_name), default_calls)
     period_seconds = _float_env(f"{_api_rate_env_name(api_name).replace('MAX_CALLS_PER_MINUTE', 'RATE_PERIOD_SECONDS')}", default_period)
-    return TushareRateLimiter(max_calls, period_seconds, api_name)
+    max_wait_seconds = _float_env("MHK_TUSHARE_STK_MINS_MAX_WAIT_SECONDS", 10.0) if api_name == "stk_mins" else None
+    return TushareRateLimiter(max_calls, period_seconds, api_name, max_wait_seconds)
 
 
 def get_tushare_rate_limit_stats() -> RateLimitStats:

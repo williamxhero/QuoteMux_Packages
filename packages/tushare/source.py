@@ -1279,6 +1279,8 @@ def _fetch_stock_quotes_frame(code: str, freq: str, start_dt: datetime | None, e
                     adj=None if adjust == "none" else adjust,
                     freq=TS_FREQ_MAP.get(freq, "D"),
                 )
+    except TimeoutError:
+        raise
     except Exception:
         return pd.DataFrame()
     if df is None or df.empty:
