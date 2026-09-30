@@ -11,7 +11,7 @@ import pandas as pd
 from quotemux.infra.cache.store import build_cache_path, filter_frame_by_date_range, filter_frame_by_datetime_range, latest_n_rows, merge_cache_frame, plan_missing_ranges, read_cache_frame, write_cache_frame
 from quotemux.infra.config import DATE_FORMAT
 from quotemux.infra.provider_config import get_provider_api_key, get_provider_config_value
-from quotemux.common import intraday_quote_cache_needs_refresh
+from quotemux.common import EXPECTED_INTRADAY_BAR_TIMES, intraday_quote_cache_needs_refresh
 from platform_models import AdjFactorItem, BoardCatalogItem, BoardCategoryItem, BoardMemberHistoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, BSECodeMappingItem, ExpressItem, ForecastItem, IndexCatalogItem, IndexMemberItem, IndexQuoteItem, MarketCapitalFlowItem, NameHistoryItem, ShareholderChangeItem, StockBasicInfo, StockFinancialStatementItem, StockMarginItem, StockMoneyFlowItem, StockQuoteItem, TechnicalFactorItem, TradingCalendarItem, TradingSessionItem
 from quotemux.infra.common import INTRADAY_RULES, aggregate_ohlc, add_quote_metrics, build_time_bounds, format_date_value, format_datetime_value, index_code_to_ts, normalize_index_code, normalize_stock_code, stock_code_to_ts
 from .rate_limit import call_tushare_api
@@ -1198,6 +1198,55 @@ def query_migration(payload: object):
     return query_index_members(request)
 
 
+def _normalize_tushare_intraday_frame(
+    frame: pd.DataFrame,
+    code: str,
+    freq: str,
+    adjust: str,
+) -> pd.DataFrame:
+    """Normalize source-native minute rows to QuoteMux's close-labelled grid."""
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    required = {"trade_time", "open", "high", "low", "close", "vol", "amount"}
+    if not required.issubset(frame.columns):
+        return pd.DataFrame()
+    work = frame.copy()
+    work["trade_time"] = pd.to_datetime(work["trade_time"], errors="coerce")
+    if bool(work["trade_time"].isna().any()):
+        return pd.DataFrame()
+    for column in ("open", "high", "low", "close", "vol", "amount"):
+        work[column] = pd.to_numeric(work[column], errors="coerce")
+    if bool(work[["open", "high", "low", "close", "vol", "amount"]].isna().any().any()):
+        return pd.DataFrame()
+    work = work.drop_duplicates(subset=["trade_time"], keep="last").sort_values("trade_time")
+    expected_times = tuple(EXPECTED_INTRADAY_BAR_TIMES.get(freq, ()))
+    if freq == "1m":
+        times = set(work["trade_time"].dt.strftime("%H:%M:%S"))
+        if len(work) == 241 and times == set(expected_times) | {"09:30:00"}:
+            indexed = work.set_index(work["trade_time"].dt.strftime("%H:%M:%S"))
+            opening = indexed.loc["09:30:00"]
+            first = indexed.loc["09:31:00"]
+            indexed.loc["09:31:00", "open"] = opening["open"]
+            indexed.loc["09:31:00", "high"] = max(float(opening["high"]), float(first["high"]))
+            indexed.loc["09:31:00", "low"] = min(float(opening["low"]), float(first["low"]))
+            indexed.loc["09:31:00", "vol"] = float(opening["vol"]) + float(first["vol"])
+            indexed.loc["09:31:00", "amount"] = float(opening["amount"]) + float(first["amount"])
+            work = indexed.drop(index="09:30:00").loc[list(expected_times)].reset_index(drop=True)
+        elif len(work) == len(expected_times) and times == set(expected_times):
+            work = work.set_index(work["trade_time"].dt.strftime("%H:%M:%S")).loc[list(expected_times)].reset_index(drop=True)
+        else:
+            return pd.DataFrame()
+    work["code"] = normalize_stock_code(code)
+    work["freq"] = freq
+    work["adjust"] = adjust
+    work["volume2"] = work["vol"]
+    work["is_suspended"] = False
+    work["is_st"] = False
+    for column in ("pre_close", "change", "pct_chg"):
+        work[column] = None
+    return work[["code", "trade_time", "freq", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume2", "amount", "adjust", "is_suspended", "is_st"]]
+
+
 def _fetch_stock_quotes_frame(code: str, freq: str, start_dt: datetime | None, end_dt: datetime | None, adjust: str) -> pd.DataFrame:
     api_key = get_provider_api_key()
     if ts is None or api_key == "" or freq == "tick":
@@ -1205,20 +1254,37 @@ def _fetch_stock_quotes_frame(code: str, freq: str, start_dt: datetime | None, e
     try:
         with _PRO_BAR_TOKEN_LOCK:
             ts.set_token(api_key)
-            df = call_tushare_api(
-                "pro_bar",
-                ts.pro_bar,
-                ts_code=stock_code_to_ts(code),
-                start_date=start_dt.strftime(DATE_FORMAT) if start_dt else "",
-                end_date=end_dt.strftime(DATE_FORMAT) if end_dt else "",
-                asset="E",
-                adj=None if adjust == "none" else adjust,
-                freq=TS_FREQ_MAP.get(freq, "D"),
-            )
+            if freq == "1m":
+                pro = get_ts_pro()
+                if pro is None:
+                    return pd.DataFrame()
+                df = call_tushare_api(
+                    "stk_mins",
+                    pro.stk_mins,
+                    ts_code=stock_code_to_ts(code),
+                    start_date=start_dt.strftime("%Y-%m-%d %H:%M:%S") if start_dt else "",
+                    end_date=end_dt.strftime("%Y-%m-%d %H:%M:%S") if end_dt else "",
+                    freq="1min",
+                    offset=0,
+                    limit=8000,
+                )
+            else:
+                df = call_tushare_api(
+                    "pro_bar",
+                    ts.pro_bar,
+                    ts_code=stock_code_to_ts(code),
+                    start_date=start_dt.strftime(DATE_FORMAT) if start_dt else "",
+                    end_date=end_dt.strftime(DATE_FORMAT) if end_dt else "",
+                    asset="E",
+                    adj=None if adjust == "none" else adjust,
+                    freq=TS_FREQ_MAP.get(freq, "D"),
+                )
     except Exception:
         return pd.DataFrame()
     if df is None or df.empty:
         return pd.DataFrame()
+    if freq == "1m":
+        return _normalize_tushare_intraday_frame(df, code, freq, adjust)
     time_column = "trade_time" if "trade_time" in df.columns else "trade_date"
     volume_column = "vol" if "vol" in df.columns else "volume"
     work = df.copy().sort_values(time_column)
