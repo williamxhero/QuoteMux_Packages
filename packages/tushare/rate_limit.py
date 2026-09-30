@@ -19,6 +19,7 @@ DEFAULT_MAX_CALLS_PER_MINUTE = 700
 DEFAULT_API_RATE_LIMITS = {
     "hm_detail": (1, 3600.0),
     "report_rc": (1, 60.0),
+    "stk_mins": (1, 60.0),
 }
 RATE_LIMIT_PERIOD_SECONDS = 60.0
 RATE_LIMIT_STATE_PATH = Path(os.getenv("MHK_TUSHARE_RATE_LIMIT_STATE_PATH", "")) if os.getenv("MHK_TUSHARE_RATE_LIMIT_STATE_PATH", "") else DATA_ROOT / "type=cache" / "service=integration_api" / "provider=tushare" / "rate_limit" / "state.json"
