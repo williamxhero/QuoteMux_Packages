@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from quotemux_packages.tushare import rate_limit, source
 
@@ -13,8 +14,31 @@ def test_stk_mins_rate_limit_matches_provider_quota(monkeypatch) -> None:
         limiter = rate_limit.get_tushare_api_rate_limiter("stk_mins")
         assert limiter._max_calls_per_minute == 1
         assert limiter._period_seconds == 3600.0
+        assert limiter._max_wait_seconds == 10.0
     finally:
         rate_limit.get_tushare_api_rate_limiter.cache_clear()
+
+
+def test_stk_mins_exhausted_quota_fails_without_waiting(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(rate_limit, "RATE_LIMIT_STATE_PATH", tmp_path / "state.json")
+    limiter = rate_limit.TushareRateLimiter(1, 3600.0, "stk_mins", max_wait_seconds=0.0)
+    calls = []
+
+    limiter.call(lambda: calls.append(1))
+    with pytest.raises(TimeoutError, match="rate limit unavailable"):
+        limiter.call(lambda: calls.append(2))
+
+    assert calls == [1]
+
+
+def test_stk_mins_timeout_reaches_capture_worker(monkeypatch) -> None:
+    monkeypatch.setattr(source, "get_provider_api_key", lambda: "token")
+    monkeypatch.setattr(source, "get_ts_pro", lambda: SimpleNamespace(stk_mins=lambda **kwargs: None))
+    monkeypatch.setattr(source, "ts", SimpleNamespace(set_token=lambda token: None))
+    monkeypatch.setattr(source, "call_tushare_api", lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError("quota exhausted")))
+
+    with pytest.raises(TimeoutError, match="quota exhausted"):
+        source._fetch_stock_quotes_frame("000001", "1m", datetime(2026, 9, 29), datetime(2026, 9, 29, 23, 59), "none")
 
 
 def _minute_frame() -> pd.DataFrame:
