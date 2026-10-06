@@ -1,11 +1,35 @@
 from __future__ import annotations
 
-import http.client
+import importlib
 import json
 import socket
+import sys
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from quotemux_packages.eastmoney_official.errors import P0ProviderError
+
+
+def _load_stdlib_http():
+    local_dir = Path(__file__).resolve().parent
+    original_path = sys.path[:]
+    local_http = sys.modules.get("http")
+    if local_http is not None and getattr(local_http, "__file__", None) == __file__:
+        del sys.modules["http"]
+    try:
+        sys.path[:] = [
+            entry
+            for entry in sys.path
+            if Path(entry or ".").resolve() != local_dir
+        ]
+        stdlib_http = importlib.import_module("http")
+        importlib.import_module("http.client")
+        return stdlib_http
+    finally:
+        sys.path[:] = original_path
+
+
+http = _load_stdlib_http()
 
 
 def get_json(
