@@ -10,12 +10,13 @@ requires-python = ">=3.12"
 dependencies = []
 
 [tool.setuptools]
-packages = ["quotemux_packages", "quotemux_packages.akshare", "quotemux_packages.cninfo_evidence", "quotemux_packages.crawler_provider", "quotemux_packages.derived_core", "quotemux_packages.eastmoney_official", "quotemux_packages.efinance", "quotemux_packages.mootdx", "quotemux_packages.opentdx", "quotemux_packages.shinny_edb", "quotemux_packages.shinny_tqsdk", "quotemux_packages.tushare", "quotemux_packages.user_pyramid_archive"]
+packages = ["quotemux_packages", "quotemux_packages.a_stock_data", "quotemux_packages.akshare", "quotemux_packages.cninfo_evidence", "quotemux_packages.crawler_provider", "quotemux_packages.derived_core", "quotemux_packages.eastmoney_official", "quotemux_packages.efinance", "quotemux_packages.mootdx", "quotemux_packages.opentdx", "quotemux_packages.shinny_edb", "quotemux_packages.shinny_tqsdk", "quotemux_packages.tushare", "quotemux_packages.user_pyramid_archive"]
 package-dir = {"quotemux_packages" = "packages"}
 
 [tool.setuptools.package-data]
 quotemux_packages = ["py.typed"]
 "quotemux_packages.akshare" = ["quotemux_package.json", "requirements.txt"]
+"quotemux_packages.a_stock_data" = ["quotemux_package.json"]
 "quotemux_packages.cninfo_evidence" = ["quotemux_package.json"]
 "quotemux_packages.crawler_provider" = ["quotemux_package.json", "requirements.txt"]
 "quotemux_packages.derived_core" = ["quotemux_package.json", "requirements.txt"]
