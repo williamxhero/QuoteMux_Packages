@@ -124,6 +124,12 @@ def _urllib_get(url: str) -> tuple[int, bytes]:
         return int(response.status), response.read()
 
 
+def _is_index_row(row: dict[str, Any]) -> bool:
+    """Exclude TDX index rows when a stock code is ambiguous (e.g. 000001)."""
+    name = str(row.get("name", "")).strip()
+    return "指数" in name or str(row.get("code", "")).startswith("399")
+
+
 def _to_items(rows: list[dict[str, Any]], adjust: str = "none") -> list[StockQuoteItem]:
     return [StockQuoteItem(
         code=normalize_stock_code(row["code"]), trade_time=row["trade_date"], freq="1d",
@@ -132,7 +138,7 @@ def _to_items(rows: list[dict[str, Any]], adjust: str = "none") -> list[StockQuo
         pct_chg=round((row["close"] - row["pre_close"]) / row["pre_close"] * 100, 4) if row["pre_close"] else None,
         volume=float(row["volume"]), amount=float(row["amount"]), adjust=adjust,
         is_suspended=False, is_st=False,
-    ) for row in rows]
+    ) for row in rows if not _is_index_row(row)]
 
 
 def get_stock_quotes(
