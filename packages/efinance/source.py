@@ -499,6 +499,8 @@ def get_stock_daily_snapshot_full(trade_date: str) -> list[StockQuoteItem]:
             change = close - pre_close
         if pct_chg is None and change is not None and pre_close not in {None, 0}:
             pct_chg = change / pre_close * 100
+        volume = _float_value(row.get("成交量"))
+        amount = _float_value(row.get("成交额"))
         items.append(
             StockQuoteItem(
                 code=code,
@@ -511,9 +513,10 @@ def get_stock_daily_snapshot_full(trade_date: str) -> list[StockQuoteItem]:
                 pre_close=pre_close,
                 change=change,
                 pct_chg=pct_chg,
-                volume=_float_value(row.get("成交量")),
-                amount=_float_value(row.get("成交额")),
+                volume=volume,
+                amount=amount,
                 adjust="none",
+                is_suspended=(volume == 0 and amount == 0),
             )
         )
     return sorted(items, key=lambda item: item.code)
