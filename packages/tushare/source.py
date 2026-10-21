@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from functools import lru_cache
 import math
 import re
@@ -13,7 +13,7 @@ from quotemux.infra.config import DATE_FORMAT
 from quotemux.infra.provider_config import get_provider_api_key, get_provider_config_value
 from quotemux.common import EXPECTED_INTRADAY_BAR_TIMES, intraday_quote_cache_needs_refresh
 from platform_models import AdjFactorItem, BoardCatalogItem, BoardCategoryItem, BoardMemberHistoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem, BSECodeMappingItem, ExpressItem, ForecastItem, IndexCatalogItem, IndexMemberItem, IndexQuoteItem, MarketCapitalFlowItem, NameHistoryItem, ShareholderChangeItem, StockBasicInfo, StockFinancialStatementItem, StockMarginItem, StockMoneyFlowItem, StockQuoteItem, TechnicalFactorItem, TradingCalendarItem, TradingSessionItem
-from quotemux.infra.common import INTRADAY_RULES, aggregate_ohlc, add_quote_metrics, build_time_bounds, format_date_value, format_datetime_value, index_code_to_ts, normalize_index_code, normalize_stock_code, stock_code_to_ts
+from quotemux.infra.common import INTRADAY_RULES, aggregate_ohlc, add_quote_metrics, build_time_bounds, format_date_value, format_datetime_value, index_code_to_ts, normalize_index_code, normalize_stock_code, stock_code_to_ts, stock_market_name
 from .rate_limit import call_tushare_api
 
 import sys
@@ -56,6 +56,26 @@ STOCK_BASIC_COLUMNS = (
     "delist_date",
     "list_status",
 )
+TUSHARE_DAILY_SNAPSHOT_FIELDS = (
+    "ts_code",
+    "trade_date",
+    "open",
+    "high",
+    "low",
+    "close",
+    "pre_close",
+    "change",
+    "pct_chg",
+    "vol",
+    "amount",
+)
+TUSHARE_DAILY_SNAPSHOT_QUERY_FIELDS = ",".join(TUSHARE_DAILY_SNAPSHOT_FIELDS)
+# Tushare documents a 6,000-row single-query cap.  A-share full-market snapshots
+# are below it today; hitting it means the response may be truncated.
+TUSHARE_DAILY_SNAPSHOT_MAX_ROWS = 6000
+_TUSHARE_STOCK_TS_CODE = re.compile(r"([0-9]{6})\.(SH|SZ|BJ)\Z", flags=re.ASCII)
+_TUSHARE_SUFFIX_BY_MARKET = {"SHSE": "SH", "SZSE": "SZ", "BJSE": "BJ"}
+_DAILY_SNAPSHOT_CACHE_NAMESPACE = ["stocks", "quotes", "daily-snapshot-v2"]
 _PRO_BAR_TOKEN_LOCK = threading.Lock()
 DEFAULT_TUSHARE_REQUEST_TIMEOUT_SECONDS = 10.0
 
@@ -1306,29 +1326,149 @@ def _fetch_stock_quotes_frame(code: str, freq: str, start_dt: datetime | None, e
     return work[["code", "trade_time", "freq", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume2", "amount", "adjust", "is_suspended", "is_st"]]
 
 
+def _exact_daily_snapshot_date(value: object) -> str:
+    """Return one strict YYYY-MM-DD date, rejecting ranges and loose text."""
+    if isinstance(value, datetime):
+        day = value.date()
+    elif isinstance(value, date):
+        day = value
+    else:
+        if value is None:
+            raise ValueError("trade_date must be one exact YYYY-MM-DD or YYYYMMDD date")
+        text = str(value).strip()
+        if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", text, flags=re.ASCII):
+            date_format = "%Y-%m-%d"
+        elif re.fullmatch(r"[0-9]{8}", text, flags=re.ASCII):
+            date_format = "%Y%m%d"
+        else:
+            raise ValueError("trade_date must be one exact YYYY-MM-DD or YYYYMMDD date")
+        try:
+            day = datetime.strptime(text, date_format).date()
+        except ValueError as exc:
+            raise ValueError("trade_date must be one exact valid calendar date") from exc
+    return day.isoformat()
+
+
+def _canonical_snapshot_code(ts_code: object) -> str | None:
+    """Map ts_code to the core canonical code only when suffix and prefix agree.
+
+    ``000001.SH`` is the SSE index, not Ping An Bank, and ``399001.SZ`` is an
+    index despite its SZ suffix.  Both are excluded instead of polluting the
+    stock snapshot with a colliding identity.
+    """
+    text = str(ts_code).strip().upper()
+    match = _TUSHARE_STOCK_TS_CODE.fullmatch(text)
+    if match is None:
+        raise RuntimeError(f"Tushare daily snapshot has invalid ts_code: {ts_code!r}")
+    code, suffix = match.groups()
+    expected_suffix = _TUSHARE_SUFFIX_BY_MARKET.get(stock_market_name(code), "")
+    if suffix != expected_suffix or code.startswith(("399", "899")):
+        return None
+    return code
+
+
+def _snapshot_number(value: object, field_name: str, code: str) -> float:
+    if value is None or isinstance(value, bool):
+        raise RuntimeError(f"Tushare daily snapshot has invalid {field_name} for {code}")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"Tushare daily snapshot has non-numeric {field_name} for {code}") from exc
+    if not math.isfinite(number):
+        raise RuntimeError(f"Tushare daily snapshot has non-finite {field_name} for {code}")
+    return number
+
+
+def _stock_daily_snapshot_items_from_frame(frame: pd.DataFrame, trade_date: str) -> list[StockQuoteItem]:
+    if frame is None:
+        return []
+    if not isinstance(frame, pd.DataFrame):
+        raise RuntimeError("Tushare daily snapshot response is not a DataFrame")
+    if frame.empty:
+        return []
+    missing_columns = [column for column in TUSHARE_DAILY_SNAPSHOT_FIELDS if column not in frame.columns]
+    if missing_columns:
+        raise RuntimeError(
+            "Tushare daily snapshot response is missing columns: " + ", ".join(missing_columns)
+        )
+    if len(frame) >= TUSHARE_DAILY_SNAPSHOT_MAX_ROWS:
+        raise RuntimeError(
+            f"Tushare daily snapshot hit the {TUSHARE_DAILY_SNAPSHOT_MAX_ROWS}-row query cap; refusing a potentially truncated market snapshot"
+        )
+    items_by_code: dict[str, StockQuoteItem] = {}
+    for row in frame.to_dict("records"):
+        code = _canonical_snapshot_code(row.get("ts_code"))
+        if code is None:
+            continue
+        row_date = _exact_daily_snapshot_date(row.get("trade_date"))
+        if row_date != trade_date:
+            raise RuntimeError(
+                f"Tushare daily snapshot returned {row_date} for requested {trade_date} ({code})"
+            )
+        if code in items_by_code:
+            raise RuntimeError(f"Tushare daily snapshot returned duplicate identity: {code}")
+        numbers = {
+            field_name: _snapshot_number(row.get(field_name), field_name, code)
+            for field_name in (
+                "open",
+                "high",
+                "low",
+                "close",
+                "pre_close",
+                "change",
+                "pct_chg",
+                "vol",
+                "amount",
+            )
+        }
+        if any(numbers[field_name] < 0 for field_name in ("open", "high", "low", "close", "pre_close", "vol", "amount")):
+            raise RuntimeError(f"Tushare daily snapshot has negative price or trade value for {code}")
+        if numbers["low"] > numbers["high"]:
+            raise RuntimeError(f"Tushare daily snapshot has low > high for {code}")
+        if not numbers["low"] <= numbers["open"] <= numbers["high"] or not numbers["low"] <= numbers["close"] <= numbers["high"]:
+            raise RuntimeError(f"Tushare daily snapshot has OHLC outside low/high for {code}")
+        items_by_code[code] = StockQuoteItem(
+            code=code,
+            trade_time=trade_date,
+            freq="1d",
+            open=numbers["open"],
+            high=numbers["high"],
+            low=numbers["low"],
+            close=numbers["close"],
+            pre_close=numbers["pre_close"],
+            change=numbers["change"],
+            pct_chg=numbers["pct_chg"],
+            # Tushare daily reports vol in lots and amount in thousand yuan.
+            volume=numbers["vol"] * 100,
+            amount=numbers["amount"] * 1000,
+            adjust="none",
+            # daily has neither suspension nor ST flags/names; never infer them.
+            is_suspended=False,
+            is_st=False,
+        )
+    return [items_by_code[code] for code in sorted(items_by_code)]
+
+
 def _fetch_stock_daily_snapshot_frame(trade_date: str) -> pd.DataFrame:
     pro = get_ts_pro()
     if pro is None:
         return pd.DataFrame()
     try:
-        df = call_tushare_api("daily", pro.daily, trade_date=trade_date.replace("-", ""))
+        frame = call_tushare_api(
+            "daily",
+            pro.daily,
+            trade_date=trade_date.replace("-", ""),
+            fields=TUSHARE_DAILY_SNAPSHOT_QUERY_FIELDS,
+        )
+    except TimeoutError:
+        raise
     except Exception:
         return pd.DataFrame()
-    if df is None or df.empty:
+    if frame is None:
         return pd.DataFrame()
-    work = df.copy()
-    work["code"] = work["ts_code"].astype(str).str.split(".").str[0]
-    work["trade_time"] = pd.to_datetime(work["trade_date"])
-    work["freq"] = "1d"
-    work["adjust"] = "none"
-    work["volume2"] = pd.to_numeric(work["vol"], errors="coerce") * 100 if "vol" in work.columns else None
-    for column in ["open", "high", "low", "close", "pre_close", "change", "pct_chg", "amount"]:
-        if column not in work.columns:
-            work[column] = None
-    work["amount"] = pd.to_numeric(work["amount"], errors="coerce") * 1000
-    work["is_suspended"] = False
-    work["is_st"] = False
-    return work[["code", "trade_time", "freq", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume2", "amount", "adjust", "is_suspended", "is_st"]]
+    if not isinstance(frame, pd.DataFrame):
+        raise RuntimeError("Tushare daily snapshot response is not a DataFrame")
+    return frame
 
 
 def _frame_to_stock_quotes(df: pd.DataFrame, freq: str) -> list[StockQuoteItem]:
@@ -1408,25 +1548,44 @@ def get_stock_quotes(
     return items
 
 
-def get_stock_daily_snapshot(trade_date: str) -> list[StockQuoteItem]:
-    actual_trade_date = format_date_value(trade_date)
-    if actual_trade_date == "":
-        return []
-    cache_path = build_cache_path("tushare", ["stocks", "quotes", "daily-snapshot"], {"trade_date": actual_trade_date.replace("-", "")})
+def _cached_stock_daily_snapshot_items(cache_path, trade_date: str) -> list[StockQuoteItem]:
     cache_df = read_cache_frame(cache_path)
     if cache_df.empty:
-        fetched_df = _fetch_stock_daily_snapshot_frame(actual_trade_date)
-        if not fetched_df.empty:
-            write_cache_frame(cache_path, fetched_df)
-            cache_df = fetched_df
-    if cache_df.empty:
         return []
-    filtered_df = filter_frame_by_date_range(cache_df, "trade_time", actual_trade_date, actual_trade_date)
-    return _frame_to_stock_quotes(filtered_df, "1d")
+    try:
+        return _stock_daily_snapshot_items_from_frame(cache_df, trade_date)
+    except Exception:
+        # A corrupt/legacy cache must not publish rows.  Treat it as a miss and
+        # let the provider fetch a clean exact-date response.
+        return []
 
 
 def get_stock_daily_snapshot_full(trade_date: str) -> list[StockQuoteItem]:
-    return get_stock_daily_snapshot(trade_date)
+    """Return Tushare's exact-date, unadjusted full-market A-share snapshot.
+
+    The endpoint requests the documented ``daily`` identity/OHLCVA fields for one
+    trade date.  Missing codes (for example suspended stocks) are not filled
+    with synthetic rows: only rows actually returned by Tushare are published.
+    """
+    actual_trade_date = _exact_daily_snapshot_date(trade_date)
+    cache_path = build_cache_path(
+        "tushare",
+        _DAILY_SNAPSHOT_CACHE_NAMESPACE,
+        {"trade_date": actual_trade_date.replace("-", "")},
+    )
+    cached_items = _cached_stock_daily_snapshot_items(cache_path, actual_trade_date)
+    if cached_items:
+        return cached_items
+    fetched_df = _fetch_stock_daily_snapshot_frame(actual_trade_date)
+    items = _stock_daily_snapshot_items_from_frame(fetched_df, actual_trade_date)
+    if items:
+        write_cache_frame(cache_path, fetched_df)
+    return items
+
+
+def get_stock_daily_snapshot(trade_date: str) -> list[StockQuoteItem]:
+    """Compatibility alias for the full-market exact-date snapshot handler."""
+    return get_stock_daily_snapshot_full(trade_date)
 
 
 def _rsi(series: pd.Series, period: int) -> pd.Series:
