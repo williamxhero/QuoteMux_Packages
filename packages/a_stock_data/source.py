@@ -20,7 +20,7 @@ from platform_models import StockQuoteItem
 
 TDX_PACKAGE_URL = "https://www.tdx.com.cn/products/data/data/g4day/{ymd}.zip"
 TDX_BJ_FIRST_DAY = "20220506"
-TDX_MIN_PRICED = {"sh": 10000, "sz": 3000, "bj": 50}
+TDX_MIN_STOCK_ROWS = {"sh": 1800, "sz": 2400, "bj": 150}
 _MARKETS = ("sh", "sz", "bj")
 
 
@@ -48,13 +48,11 @@ def normalize_stock_code(value: object) -> str:
 
 
 def _market_for_code(code: str) -> str | None:
-    if code.startswith("399"):
-        return None
     if code.startswith(("4", "8", "920")):
         return "bj"
-    if code.startswith(("5", "6", "9")):
+    if code[0] == "6" or code == "888880":
         return "sh"
-    if code.startswith(("0", "1", "2", "3")):
+    if code[0] in "03" and not code.startswith(("395", "399")):
         return "sz"
     return None
 
@@ -107,6 +105,8 @@ def _parse_package(content: bytes, ymd: str) -> list[dict[str, Any]]:
                     raise RuntimeError(f"{market} duplicate code or quote sequence")
                 codes.add(code)
                 seqs.add(seq)
+                if not _stock_market(market, code):
+                    continue
                 block = md1[seq * 512 : (seq + 1) * 512]
                 if len(block) != 512:
                     raise RuntimeError(f"{market}{code} quote block out of range")
@@ -115,9 +115,11 @@ def _parse_package(content: bytes, ymd: str) -> list[dict[str, Any]]:
                 amount = struct.unpack("<d", block[72:80])[0]
                 if not all(math.isfinite(v) for v in (prev_close, open_, high, low, close, amount)):
                     raise RuntimeError(f"{market}{code} contains a non-finite value")
-                if close <= 0:
+                if open_ == high == low == 0 and volume == 0 and amount == 0 and close in (0, prev_close):
                     continue
-                if prev_close <= 0 or open_ <= 0 or high <= 0 or low <= 0 or not low <= min(open_, close) <= max(open_, close) <= high:
+                if min(prev_close, open_, high, low, close) <= 0:
+                    raise RuntimeError(f"{market}{code} contains invalid zero/negative OHLC values")
+                if not low <= min(open_, close) <= max(open_, close) <= high:
                     raise RuntimeError(f"{market}{code} contains invalid OHLC values")
                 raw_name = record[40:72].split(b"\x00")[0]
                 try:
@@ -132,8 +134,8 @@ def _parse_package(content: bytes, ymd: str) -> list[dict[str, Any]]:
                     "high": round(high, 4), "low": round(low, 4), "close": round(close, 4),
                     "volume": int(volume), "amount": round(amount, 2),
                 })
-            if len(rows) - before < TDX_MIN_PRICED[market]:
-                raise RuntimeError(f"{market} has too few priced rows: {len(rows) - before}")
+            if len(rows) - before < TDX_MIN_STOCK_ROWS[market]:
+                raise RuntimeError(f"{market} has too few priced stock rows: {len(rows) - before}")
     return rows
 
 
@@ -189,13 +191,28 @@ def _is_index_row(row: dict[str, Any]) -> bool:
     return not _stock_market(str(row.get("market", "")), str(row.get("code", "")))
 
 
+@lru_cache(maxsize=8)
+def _parsed_day(ymd: str, content_length: int, content_crc: int) -> dict[str, dict[str, Any]]:
+    """Parse one immutable daily archive once per process."""
+    _url, content = _cached_package(ymd)
+    if len(content) != content_length or zlib.crc32(content) != content_crc:
+        raise RuntimeError(f"TDX package changed while cached: {ymd}")
+    return {row["code"]: row for row in _parse_package(content, ymd)}
+
+
+def _day_rows(ymd: str) -> dict[str, dict[str, Any]]:
+    _url, content = _cached_package(ymd)
+    return _parsed_day(ymd, len(content), zlib.crc32(content))
+
+
 def get_stock_daily_snapshot_full(trade_date: str | date | datetime) -> list[StockQuoteItem]:
     """Return all stock rows from the official TDX package for one exact date."""
     day = _normalize_date(trade_date)
     ymd = day.replace("-", "")
     url, content = _cached_package(ymd)
+    index = _parsed_day(ymd, len(content), zlib.crc32(content))
     try:
-        rows = _parse_package(content, ymd)
+        rows = list(index.values())
     except (zipfile.BadZipFile, EOFError, zlib.error) as exc:
         raise RuntimeError(f"invalid TDX ZIP {url}: {type(exc).__name__}") from exc
     return _to_items(rows, "none")
@@ -240,12 +257,12 @@ def get_stock_quotes(
     items: list[StockQuoteItem] = []
     for day in dates:
         ymd = day.replace("-", "")
-        url, content = _cached_package(ymd)
+        url, _content = _cached_package(ymd)
         try:
-            rows = _parse_package(content, ymd)
+            rows = _day_rows(ymd)
         except (zipfile.BadZipFile, EOFError, zlib.error) as exc:
             raise RuntimeError(f"invalid TDX ZIP {url}: {type(exc).__name__}") from exc
-        items.extend(_to_items([row for row in rows if row["code"] in wanted and not _is_index_row(row)], adjust or "none"))
+        items.extend(_to_items([rows[code] for code in wanted if code in rows], adjust or "none"))
     if count is not None:
         if isinstance(count, bool) or not isinstance(count, int) or count < 0:
             raise ValueError("count must be a non-negative integer")
