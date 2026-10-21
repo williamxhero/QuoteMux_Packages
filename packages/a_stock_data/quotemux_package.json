@@ -11,6 +11,13 @@
       "handler_name": "get_stock_quotes",
       "mergeable": true,
       "notes": "Exact-date SSE/SZSE/BSE TDX post-close package; volume is shares and amount is yuan."
+    },
+    {
+      "capability_id": "stocks.quotes.daily_snapshot",
+      "support_level": "native",
+      "handler_name": "get_stock_daily_snapshot_full",
+      "mergeable": true,
+      "notes": "Exact-date full-market SSE/SZSE/BSE TDX unadjusted post-close package; volume is shares and amount is yuan."
     }
   ],
   "capability_tags": ["provider", "http", "binary-parser", "tdx"],
@@ -18,7 +25,8 @@
   "secret_fields": [],
   "supports_multi_instance": true,
   "handler_targets": {
-    "get_stock_quotes": "quotemux_packages.a_stock_data.source:get_stock_quotes"
+    "get_stock_quotes": "quotemux_packages.a_stock_data.source:get_stock_quotes",
+    "get_stock_daily_snapshot_full": "quotemux_packages.a_stock_data.source:get_stock_daily_snapshot_full"
   },
   "origin": "builtin",
   "package_root": ""

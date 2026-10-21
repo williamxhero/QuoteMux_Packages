@@ -78,6 +78,8 @@ def _number(row: dict[str, Any], *names: str) -> float | None:
         value = row.get(name)
         if value is None or value == "":
             continue
+        if isinstance(value, bool):
+            raise FreeStockdbError(f"invalid boolean {name} in free-stockdb row")
         try:
             number = float(value)
         except (TypeError, ValueError) as exc:
@@ -132,36 +134,43 @@ def _query_http(code: str, trade_date: str, *, session: requests.Session | None 
 
 
 def _quote(code: str, trade_date: str, row: dict[str, Any], adjust: str) -> StockQuoteItem:
-    row_date = row.get("date", trade_date)
+    if "date" not in row or "code" not in row:
+        raise FreeStockdbError("free-stockdb row must include code and date identity")
+    if row.get("is_st") not in (None, False, 0, "", "0") or row.get("is_suspended", row.get("suspended")) not in (None, False, 0, "", "0"):
+        raise FreeStockdbError("free-stockdb endpoint does not provide verified ST/suspension flags")
+    row_date = row["date"]
     actual_date = _date_text(row_date)
     if actual_date != trade_date:
         raise FreeStockdbError(f"free-stockdb row date mismatch for {code}")
-    row_code = row.get("code", code)
+    row_code = row["code"]
     if _normalise_code(row_code) != code:
         raise FreeStockdbError(f"free-stockdb row code mismatch for {code}")
-    close = _number(row, "close")
-    pre_close = _number(row, "pre_close", "preclose")
+    values = {name: _number(row, *names) for name, names in {
+        "open": ("open",), "high": ("high",), "low": ("low",), "close": ("close",),
+        "pre_close": ("pre_close", "preclose"), "volume": ("volume", "vol"), "amount": ("amount",),
+    }.items()}
+    if any(values[key] is None for key in ("open", "high", "low", "close", "pre_close", "volume", "amount")):
+        raise FreeStockdbError("free-stockdb row is missing required OHLCVA fields")
+    if values["volume"] < 0 or values["amount"] < 0:
+        raise FreeStockdbError("free-stockdb row volume and amount must be non-negative")
+    if not (values["low"] <= min(values["open"], values["close"]) <= max(values["open"], values["close"]) <= values["high"]):
+        raise FreeStockdbError("free-stockdb row has invalid OHLC bounds")
+    pre_close, volume, amount = values["pre_close"], values["volume"], values["amount"]
     change = _number(row, "change")
     pct_chg = _number(row, "pct_chg", "pct_change")
-    if change is None and close is not None and pre_close is not None:
-        change = close - pre_close
+    if change is None:
+        change = values["close"] - values["pre_close"]
+    trade_time = trade_date[:4] + "-" + trade_date[4:6] + "-" + trade_date[6:]
     return StockQuoteItem(
         code=code,
-        trade_time=f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]} 00:00:00",
+        trade_time=trade_time,
         freq=DAILY_FREQ,
-        open=_number(row, "open"),
-        high=_number(row, "high"),
-        low=_number(row, "low"),
-        close=close,
-        pre_close=pre_close,
-        change=change,
-        pct_chg=pct_chg,
-        # free-stockdb's verified row uses shares and yuan; do not rescale.
-        volume=_number(row, "volume", "vol"),
-        amount=_number(row, "amount"),
-        adjust=adjust or "none",
-        is_suspended=bool(row.get("is_suspended", row.get("suspended", False))),
-        is_st=bool(row.get("is_st", False)),
+        open=values["open"], high=values["high"], low=values["low"], close=values["close"],
+        pre_close=pre_close, change=change, pct_chg=pct_chg,
+        volume=volume, amount=amount,
+        adjust="none",
+        is_suspended=False,
+        is_st=False,
     )
 
 
@@ -183,11 +192,15 @@ def get_stock_quotes(
     A missing exact key is an empty result for that code; transport/decoding
     failures remain errors so the runtime can distinguish them from a miss.
     """
-    del start_time, end_time, count
+    del start_time, end_time
     if freq != DAILY_FREQ:
         return []
     if not codes:
         return []
+    if count is not None and (isinstance(count, bool) or not isinstance(count, int) or count < 0):
+        raise FreeStockdbError("count must be a non-negative integer")
+    if adjust not in {"", "none"}:
+        raise FreeStockdbError("free-stockdb supports unadjusted daily quotes only")
     exact_date = _exact_date(trade_date, start_date, end_date)
     items: list[StockQuoteItem] = []
     for raw_code in codes:
@@ -195,4 +208,4 @@ def get_stock_quotes(
         row = _query(code, exact_date)
         if row is not None:
             items.append(_quote(code, exact_date, row, adjust))
-    return items
+    return items[:count] if count is not None else items

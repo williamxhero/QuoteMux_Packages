@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import io
 import math
+import os
 import re
 import struct
+import tempfile
 import urllib.error
 import urllib.request
 import zipfile
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Callable
 
 import zlib
@@ -22,11 +26,41 @@ _MARKETS = ("sh", "sz", "bj")
 
 def normalize_stock_code(value: object) -> str:
     text = str(value).strip().upper()
-    for suffix in (".SH", ".SZ", ".BJ", ".XSHG", ".XSHE"):
+    suffix_market = {".SH": "sh", ".XSHG": "sh", ".SZ": "sz", ".XSHE": "sz", ".BJ": "bj"}
+    declared = None
+    for suffix, market in suffix_market.items():
         if text.endswith(suffix):
-            text = text[: -len(suffix)]
+            declared = market
+            text = text[:-len(suffix)]
             break
-    return text.removeprefix("SH").removeprefix("SZ").removeprefix("BJ")
+    prefix_market = next((m for prefix, m in (("SH", "sh"), ("SZ", "sz"), ("BJ", "bj")) if text.startswith(prefix)), None)
+    if prefix_market:
+        if declared and declared != prefix_market:
+            raise ValueError(f"conflicting stock market in code: {value!r}")
+        declared = prefix_market
+        text = text[2:]
+    if not re.fullmatch(r"[0-9]{6}", text):
+        raise ValueError(f"invalid A-share stock code: {value!r}")
+    market = _market_for_code(text)
+    if market is None or declared and declared != market:
+        raise ValueError(f"stock market conflicts with code: {value!r}")
+    return text
+
+
+def _market_for_code(code: str) -> str | None:
+    if code.startswith("399"):
+        return None
+    if code.startswith(("4", "8", "920")):
+        return "bj"
+    if code.startswith(("5", "6", "9")):
+        return "sh"
+    if code.startswith(("0", "1", "2", "3")):
+        return "sz"
+    return None
+
+
+def _stock_market(market: str, code: str) -> bool:
+    return _market_for_code(code) == market
 
 
 def _normalize_date(value: str | date | datetime) -> str:
@@ -83,6 +117,8 @@ def _parse_package(content: bytes, ymd: str) -> list[dict[str, Any]]:
                     raise RuntimeError(f"{market}{code} contains a non-finite value")
                 if close <= 0:
                     continue
+                if prev_close <= 0 or open_ <= 0 or high <= 0 or low <= 0 or not low <= min(open_, close) <= max(open_, close) <= high:
+                    raise RuntimeError(f"{market}{code} contains invalid OHLC values")
                 raw_name = record[40:72].split(b"\x00")[0]
                 try:
                     name = raw_name.decode("gbk").strip()
@@ -118,6 +154,30 @@ def _fetch_package(ymd: str, http_get: Callable[[str], tuple[int, bytes]] | None
     return url, content
 
 
+@lru_cache(maxsize=64)
+def _cached_package(ymd: str) -> tuple[str, bytes]:
+    url = TDX_PACKAGE_URL.format(ymd=ymd)
+    cache_dir = Path(os.getenv("QUOTEMUX_A_STOCK_DATA_CACHE", Path.home() / ".cache" / "quotemux" / "a_stock_data"))
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    target = cache_dir / f"{ymd}.zip"
+    if target.is_file():
+        return url, target.read_bytes()
+    _url, content = _fetch_package(ymd)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{ymd}.", suffix=".tmp", dir=cache_dir)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temp_name, target)
+        except FileExistsError:
+            pass
+        return url, target.read_bytes()
+    finally:
+        Path(temp_name).unlink(missing_ok=True)
+
+
 def _urllib_get(url: str) -> tuple[int, bytes]:
     request = urllib.request.Request(url, headers={"User-Agent": "QuoteMux/a-stock-data"})
     with urllib.request.urlopen(request, timeout=90) as response:
@@ -125,9 +185,20 @@ def _urllib_get(url: str) -> tuple[int, bytes]:
 
 
 def _is_index_row(row: dict[str, Any]) -> bool:
-    """Exclude TDX index rows when a stock code is ambiguous (e.g. 000001)."""
-    name = str(row.get("name", "")).strip()
-    return "指数" in name or str(row.get("code", "")).startswith("399")
+    """Return true for rows whose exchange/code pair is not a stock identity."""
+    return not _stock_market(str(row.get("market", "")), str(row.get("code", "")))
+
+
+def get_stock_daily_snapshot_full(trade_date: str | date | datetime) -> list[StockQuoteItem]:
+    """Return all stock rows from the official TDX package for one exact date."""
+    day = _normalize_date(trade_date)
+    ymd = day.replace("-", "")
+    url, content = _cached_package(ymd)
+    try:
+        rows = _parse_package(content, ymd)
+    except (zipfile.BadZipFile, EOFError, zlib.error) as exc:
+        raise RuntimeError(f"invalid TDX ZIP {url}: {type(exc).__name__}") from exc
+    return _to_items(rows, "none")
 
 
 def _to_items(rows: list[dict[str, Any]], adjust: str = "none") -> list[StockQuoteItem]:
@@ -137,7 +208,7 @@ def _to_items(rows: list[dict[str, Any]], adjust: str = "none") -> list[StockQuo
         pre_close=row["pre_close"], change=round(row["close"] - row["pre_close"], 4),
         pct_chg=round((row["close"] - row["pre_close"]) / row["pre_close"] * 100, 4) if row["pre_close"] else None,
         volume=float(row["volume"]), amount=float(row["amount"]), adjust=adjust,
-        is_suspended=False, is_st=False,
+        is_suspended=False, is_st=bool(re.match(r"^(?:\*?ST|S\*ST)", str(row["name"]).strip(), re.IGNORECASE)),
     ) for row in rows if not _is_index_row(row)]
 
 
@@ -145,33 +216,40 @@ def get_stock_quotes(
     codes: list[str], freq: str, trade_date: str, start_date: str, end_date: str,
     start_time: str, end_time: str, count: int | None, adjust: str,
 ) -> list[StockQuoteItem]:
-    """Fetch exact-date full-market TDX daily bars and filter requested codes.
-
-    A request with no exact date uses the bounded date window, newest first. The
-    source is unadjusted; other adjustments are deliberately not fabricated.
-    """
+    """Fetch exact-date full-market TDX daily bars and filter requested codes."""
     del start_time, end_time
-    if freq != "1d" or adjust not in {"", "none"}:
+    if freq != "1d":
+        return []
+    if adjust not in {"", "none"}:
+        raise ValueError("a_stock_data supports unadjusted daily quotes only")
+    if not codes:
         return []
     requested_date = _normalize_date(trade_date) if trade_date else ""
     if requested_date:
+        if (start_date and _normalize_date(start_date) != requested_date) or (end_date and _normalize_date(end_date) != requested_date):
+            raise ValueError("a_stock_data accepts one exact trade date only")
         dates = [requested_date]
     else:
-        start = _normalize_date(start_date) if start_date else (date.today() - timedelta(days=30)).isoformat()
-        end = _normalize_date(end_date) if end_date else date.today().isoformat()
-        dates = [(date.fromisoformat(end) - timedelta(days=i)).isoformat() for i in range((date.fromisoformat(end) - date.fromisoformat(start)).days + 1) if date.fromisoformat(start) <= date.fromisoformat(end) - timedelta(days=i)]
-    wanted = {normalize_stock_code(code) for code in codes if normalize_stock_code(code)}
+        if not start_date or not end_date:
+            raise ValueError("a_stock_data requires one exact trade date")
+        start, end = _normalize_date(start_date), _normalize_date(end_date)
+        if start != end:
+            raise ValueError("a_stock_data accepts one exact trade date only")
+        dates = [start]
+    wanted = {normalize_stock_code(code) for code in codes}
     items: list[StockQuoteItem] = []
     for day in dates:
         ymd = day.replace("-", "")
-        url, content = _fetch_package(ymd)
+        url, content = _cached_package(ymd)
         try:
             rows = _parse_package(content, ymd)
         except (zipfile.BadZipFile, EOFError, zlib.error) as exc:
             raise RuntimeError(f"invalid TDX ZIP {url}: {type(exc).__name__}") from exc
-        items.extend(_to_items([row for row in rows if not wanted or row["code"] in wanted], adjust or "none"))
-        if count and len(items) >= count:
-            return items[:count]
+        items.extend(_to_items([row for row in rows if row["code"] in wanted and not _is_index_row(row)], adjust or "none"))
+    if count is not None:
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError("count must be a non-negative integer")
+        return items[:count]
     return items
 
 

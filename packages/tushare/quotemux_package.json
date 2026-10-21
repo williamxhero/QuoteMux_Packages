@@ -542,7 +542,7 @@
       "support_level": "native",
       "handler_name": "get_stock_daily_snapshot_full",
       "mergeable": true,
-      "notes": ""
+      "notes": "Tushare daily exact-date full-market A-share unadjusted snapshot; requests ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount; volume=vol*100 shares, amount=amount*1000 yuan; no adj_factor; absent codes (including suspended) are not synthesized; ST/suspension flags are not inferred."
     },
     {
       "capability_id": "stocks.quotes.intraday",

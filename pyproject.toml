@@ -16,7 +16,7 @@ package-dir = {"quotemux_packages" = "packages"}
 [tool.setuptools.package-data]
 quotemux_packages = ["py.typed"]
 "quotemux_packages.akshare" = ["quotemux_package.json", "requirements.txt"]
-"quotemux_packages.a_stock_data" = ["quotemux_package.json"]
+"quotemux_packages.a_stock_data" = ["quotemux_package.json", "LICENSE", "NOTICE"]
 "quotemux_packages.cninfo_evidence" = ["quotemux_package.json"]
 "quotemux_packages.crawler_provider" = ["quotemux_package.json", "requirements.txt"]
 "quotemux_packages.derived_core" = ["quotemux_package.json", "requirements.txt"]
