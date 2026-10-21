@@ -117,3 +117,34 @@ def test_exact_single_date_required_before_fetch(monkeypatch):
     manifest = json.loads((Path(__file__).parents[1] / "quotemux_package.json").read_text())
     assert manifest["handler_targets"]["get_stock_quotes"] == "quotemux_packages.a_stock_data.source:get_stock_quotes"
     assert manifest["capabilities"][0]["capability_id"] == "stocks.quotes.daily"
+
+
+def test_full_snapshot_returns_exact_day_stock_rows_and_uses_cached_archive(monkeypatch):
+    monkeypatch.setitem(source.TDX_MIN_PRICED, "sh", 1)
+    monkeypatch.setitem(source.TDX_MIN_PRICED, "sz", 1)
+    archive = _archive("220105")
+    calls = []
+    monkeypatch.setattr(source, "_cached_package", lambda ymd: (calls.append(ymd) or source.TDX_PACKAGE_URL.format(ymd=ymd), archive))
+
+    items = source.get_stock_daily_snapshot_full("2022-01-05")
+
+    assert {item.code for item in items} == {"600519", "000001"}
+    assert {item.trade_time for item in items} == {"2022-01-05"}
+    assert all(item.freq == "1d" and item.adjust == "none" for item in items)
+    assert calls == ["20220105"]
+
+
+@pytest.mark.parametrize("trade_date", ["", "2022/01/05", "2022-02-30", None])
+def test_full_snapshot_rejects_invalid_or_missing_exact_date_before_io(monkeypatch, trade_date):
+    monkeypatch.setattr(source, "_cached_package", lambda _ymd: pytest.fail("must reject before IO"))
+    with pytest.raises(ValueError, match="trade date"):
+        source.get_stock_daily_snapshot_full(trade_date)
+
+
+def test_manifest_advertises_full_snapshot_capability():
+    manifest = json.loads((Path(__file__).parents[1] / "quotemux_package.json").read_text())
+    assert manifest["handler_targets"]["get_stock_daily_snapshot_full"] == "quotemux_packages.a_stock_data.source:get_stock_daily_snapshot_full"
+    snapshot = [cap for cap in manifest["capabilities"] if cap["capability_id"] == "stocks.quotes.daily_snapshot"]
+    assert len(snapshot) == 1
+    assert snapshot[0]["handler_name"] == "get_stock_daily_snapshot_full"
+    assert snapshot[0]["support_level"] == "native"

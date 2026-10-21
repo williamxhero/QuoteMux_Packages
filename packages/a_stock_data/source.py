@@ -189,6 +189,18 @@ def _is_index_row(row: dict[str, Any]) -> bool:
     return not _stock_market(str(row.get("market", "")), str(row.get("code", "")))
 
 
+def get_stock_daily_snapshot_full(trade_date: str | date | datetime) -> list[StockQuoteItem]:
+    """Return all stock rows from the official TDX package for one exact date."""
+    day = _normalize_date(trade_date)
+    ymd = day.replace("-", "")
+    url, content = _cached_package(ymd)
+    try:
+        rows = _parse_package(content, ymd)
+    except (zipfile.BadZipFile, EOFError, zlib.error) as exc:
+        raise RuntimeError(f"invalid TDX ZIP {url}: {type(exc).__name__}") from exc
+    return _to_items(rows, "none")
+
+
 def _to_items(rows: list[dict[str, Any]], adjust: str = "none") -> list[StockQuoteItem]:
     return [StockQuoteItem(
         code=normalize_stock_code(row["code"]), trade_time=row["trade_date"], freq="1d",
