@@ -1,0 +1,42 @@
+{
+  "package_id": "free_stockdb",
+  "version": "0.1.0",
+  "source_name": "free_stockdb",
+  "display_name": "free-stockdb",
+  "description": "通过本地 free-stockdb MessagePack HTTP API 提供显式历史股票日线。",
+  "capabilities": [
+    {
+      "capability_id": "stocks.quotes.daily",
+      "support_level": "native",
+      "handler_name": "get_stock_quotes",
+      "mergeable": true,
+      "notes": "仅支持显式代码与单个精确历史日期；缺失键返回空结果。"
+    }
+  ],
+  "capability_tags": ["provider", "http", "local", "free"],
+  "config_schema": [
+    {
+      "name": "host",
+      "field_type": "string",
+      "title": "主机",
+      "description": "free-stockdb HTTP 服务主机。",
+      "required": false,
+      "default_value": "127.0.0.1"
+    },
+    {
+      "name": "port",
+      "field_type": "int",
+      "title": "端口",
+      "description": "free-stockdb HTTP 服务端口。",
+      "required": false,
+      "default_value": "7899"
+    }
+  ],
+  "secret_fields": [],
+  "supports_multi_instance": true,
+  "handler_targets": {
+    "get_stock_quotes": "quotemux_packages.free_stockdb.source:get_stock_quotes"
+  },
+  "origin": "builtin",
+  "package_root": ""
+}
