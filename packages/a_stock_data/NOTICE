@@ -1,0 +1,12 @@
+A-Stock Data TDX Daily provider
+
+This package's TDX daily archive parser is derived from the upstream project
+[a-stock-data](https://github.com/williamxhero/a-stock-data), revision
+`29b07d2e37005b9fd568bca1262f6e572b5f9407` (Apache License 2.0). The upstream
+license text is included in `LICENSE`.
+
+Modified for QuoteMux: the archive parser and field extraction are adapted to
+the source-package handler contract; stock identity is checked by market/code,
+requests are restricted to one exact date and unadjusted daily bars, and
+immutable daily ZIP artifacts are cached locally. ST status is inferred only
+from an explicit TDX name marker; suspension state is not inferred.

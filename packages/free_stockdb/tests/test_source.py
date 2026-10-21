@@ -47,6 +47,8 @@ def _row() -> dict[str, Any]:
     }
 
 
+
+
 def test_manifest_contract() -> None:
     payload = json.loads((ROOT / "packages/free_stockdb/quotemux_package.json").read_text())
     assert payload["package_id"] == "free_stockdb"
@@ -81,7 +83,7 @@ def test_exact_date_query_decodes_msgpack_and_preserves_units(monkeypatch: pytes
     assert len(result) == 1
     item = result[0]
     assert item.code == "000001"
-    assert item.trade_time == "2026-10-19 00:00:00"
+    assert item.trade_time == "2026-10-19"
     assert item.volume == 123456789.0
     assert item.amount == 987654321.5
     assert item.change == pytest.approx(0.05)
@@ -100,6 +102,31 @@ def test_missing_exact_key_is_empty_and_each_explicit_code_is_queried(monkeypatc
     result = source.get_stock_quotes(["000001", "600000"], "1d", "20261019", "", "", "", "", None, "none")
     assert [item.code for item in result] == ["000001"]
     assert requested == ["日k:000001:20261019", "日k:600000:20261019"]
+
+
+
+
+@pytest.mark.parametrize("adjust", ["qfq", "hfq", "raw"])
+def test_adjustment_rejected_before_io(monkeypatch: pytest.MonkeyPatch, adjust: str) -> None:
+    monkeypatch.setattr(source, "requests", type("NoIO", (), {"get": staticmethod(lambda *a, **k: pytest.fail("network called"))}))
+    with pytest.raises(source.FreeStockdbError, match="unadjusted"):
+        source.get_stock_quotes(["000001"], "1d", "20261019", "", "", "", "", None, adjust)
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda row: row.pop("code"),
+    lambda row: row.pop("date"),
+    lambda row: row.update(open=True),
+    lambda row: row.update(volume=-1),
+    lambda row: row.update(close=float("nan")),
+    lambda row: row.pop("amount"),
+])
+def test_invalid_rows_are_rejected(monkeypatch: pytest.MonkeyPatch, mutate) -> None:
+    row = _row()
+    mutate(row)
+    monkeypatch.setattr(source, "_query", lambda *args, **kwargs: row)
+    with pytest.raises(source.FreeStockdbError):
+        source.get_stock_quotes(["000001"], "1d", "20261019", "", "", "", "", None, "none")
 
 
 def test_bounded_inputs_and_transport_errors(monkeypatch: pytest.MonkeyPatch) -> None:
