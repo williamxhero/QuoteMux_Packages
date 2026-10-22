@@ -21,6 +21,8 @@ from platform_models import StockQuoteItem
 TDX_PACKAGE_URL = "https://www.tdx.com.cn/products/data/data/g4day/{ymd}.zip"
 TDX_BJ_FIRST_DAY = "20220506"
 TDX_MIN_STOCK_ROWS = {"sh": 1800, "sz": 2400, "bj": 150}
+# Backward-compatible test/config name retained after clarifying the contract.
+TDX_MIN_PRICED = TDX_MIN_STOCK_ROWS
 _MARKETS = ("sh", "sz", "bj")
 
 
