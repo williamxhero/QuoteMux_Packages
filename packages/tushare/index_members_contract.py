@@ -17,7 +17,6 @@ from platform_models.migration_contracts import (
 )
 from platform_models.provider_contracts import canonical_json_sha256
 from quotemux.infra.common import (
-    index_code_to_ts,
     normalize_index_code,
     normalize_stock_code,
 )
@@ -36,7 +35,7 @@ def query_index_members(
     # Lazy import prevents a parallel Provider implementation and keeps the existing
     # Tushare client/config seam authoritative.
     from quotemux_packages.tushare.rate_limit import call_tushare_api
-    from quotemux_packages.tushare.source import get_ts_pro
+    from quotemux_packages.tushare.source import _tushare_index_code, get_ts_pro
 
     pro = get_ts_pro()
     if pro is None:
@@ -47,7 +46,7 @@ def query_index_members(
         frame = call_tushare_api(
             "index_weight",
             pro.index_weight,
-            index_code=index_code_to_ts(request.index_code),
+            index_code=_tushare_index_code(request.index_code),
             start_date=request.range_start.replace("-", ""),
             end_date=request.range_end.replace("-", ""),
         )
