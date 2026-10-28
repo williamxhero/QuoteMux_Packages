@@ -1032,12 +1032,25 @@ from .stock_ownership import get_ccass_holding_details, get_ccass_holdings, get_
 from .stocks import get_auctions, get_bse_code_mappings, get_company_profile, get_hk_connect_targets, get_management_rewards, get_managers, get_nine_turn, get_premarket, get_rank_broker_monthly_picks, get_rank_research_reports, get_research_reports, get_stock_ah_comparisons, get_stock_archive, get_stock_daily_basic, get_stock_daily_market_value, get_stock_daily_valuation, get_stock_finance_indicators, get_stock_risk_flags, get_surveys
 
 
+def _tushare_index_code(index_code: str) -> str:
+    if "." not in index_code and normalize_index_code(index_code) == "000985":
+        return "000985.CSI"
+    return index_code_to_ts(index_code)
+
+
+def _index_cache_identity(index_code: str) -> dict[str, str]:
+    identity = {"index_code": normalize_index_code(index_code)}
+    if identity["index_code"] == "000985":
+        identity["ts_code"] = _tushare_index_code(index_code)
+    return identity
+
+
 def _fetch_index_quotes_frame(index_code: str, start_value: str, end_value: str) -> pd.DataFrame:
     pro = get_ts_pro()
     if pro is None:
         return pd.DataFrame()
     try:
-        df = call_tushare_api("index_daily", pro.index_daily, ts_code=index_code_to_ts(index_code), start_date=start_value, end_date=end_value)
+        df = call_tushare_api("index_daily", pro.index_daily, ts_code=_tushare_index_code(index_code), start_date=start_value, end_date=end_value)
     except Exception:
         return pd.DataFrame()
     if df is None or df.empty:
@@ -1073,16 +1086,16 @@ def get_index_quotes(
     items: list[IndexQuoteItem] = []
     for index_code in index_codes:
         normalized = normalize_index_code(index_code)
-        cache_path = build_cache_path("tushare", ["indexes", "quotes"], {"index_code": normalized})
+        cache_path = build_cache_path("tushare", ["indexes", "quotes"], _index_cache_identity(index_code))
         cache_df = read_cache_frame(cache_path)
         missing_ranges = plan_missing_ranges(cache_df, "trade_time", request_start, request_end, "day")
         fetched_frames: list[pd.DataFrame] = []
         for missing_start, missing_end in missing_ranges:
-            fetched_df = _fetch_index_quotes_frame(normalized, missing_start, missing_end)
+            fetched_df = _fetch_index_quotes_frame(index_code, missing_start, missing_end)
             if not fetched_df.empty:
                 fetched_frames.append(fetched_df)
         if cache_df.empty and not fetched_frames:
-            fetched_df = _fetch_index_quotes_frame(normalized, request_start, request_end)
+            fetched_df = _fetch_index_quotes_frame(index_code, request_start, request_end)
             if not fetched_df.empty:
                 fetched_frames.append(fetched_df)
         if fetched_frames:
@@ -1121,7 +1134,7 @@ def _fetch_index_members_frame(index_code: str, start_value: str, end_value: str
     if pro is None:
         return pd.DataFrame()
     try:
-        df = call_tushare_api("index_weight", pro.index_weight, index_code=index_code_to_ts(index_code), start_date=start_value, end_date=end_value)
+        df = call_tushare_api("index_weight", pro.index_weight, index_code=_tushare_index_code(index_code), start_date=start_value, end_date=end_value)
     except Exception:
         return pd.DataFrame()
     if df is None or df.empty:
@@ -1147,16 +1160,16 @@ def get_index_members(index_code: str, trade_date: str) -> list[IndexMemberItem]
     else:
         end_text = datetime.now().strftime(DATE_FORMAT)
         start_value = (datetime.now() - timedelta(days=370)).strftime(DATE_FORMAT)
-    cache_path = build_cache_path("tushare", ["indexes", "members"], {"index_code": normalized})
+    cache_path = build_cache_path("tushare", ["indexes", "members"], _index_cache_identity(index_code))
     cache_df = read_cache_frame(cache_path)
     missing_ranges = plan_missing_ranges(cache_df, "trade_date2", start_value, end_text, "day")
     fetched_frames: list[pd.DataFrame] = []
     for missing_start, missing_end in missing_ranges:
-        fetched_df = _fetch_index_members_frame(normalized, missing_start, missing_end)
+        fetched_df = _fetch_index_members_frame(index_code, missing_start, missing_end)
         if not fetched_df.empty:
             fetched_frames.append(fetched_df)
     if cache_df.empty and not fetched_frames:
-        fetched_df = _fetch_index_members_frame(normalized, start_value, end_text)
+        fetched_df = _fetch_index_members_frame(index_code, start_value, end_text)
         if not fetched_df.empty:
             fetched_frames.append(fetched_df)
     if fetched_frames:
