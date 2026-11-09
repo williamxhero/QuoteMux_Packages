@@ -47,7 +47,8 @@ class _Partition:
             params = (("sqlId", _SSE_SQL), ("COMPANY_STATUS", {"L": "2,4,5,7,8", "P": "5", "D": "3"}[self.status]),
                       ("STOCK_TYPE", self.board), ("REG_PROVINCE", ""), ("CSRC_CODE", ""), ("STOCK_CODE", ""),
                       ("type", "inParams"), ("isPagination", "true"), ("pageHelp.cacheSize", "1"),
-                      ("pageHelp.beginPage", "1"), ("pageHelp.pageSize", str(size)), ("pageHelp.pageNo", str(page)))
+                      ("pageHelp.beginPage", str(page)), ("pageHelp.endPage", str(page)),
+                      ("pageHelp.pageSize", str(size)), ("pageHelp.pageNo", str(page)))
             referer = "https://www.sse.com.cn/assortment/stock/list/" + ("share/" if self.status == "L" else "delisting/")
         else:
             tab = "tab2" if self.status == "D" else "tab1"
