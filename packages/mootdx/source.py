@@ -348,6 +348,12 @@ def _fetch_index_history_frame(index_code: str, freq: str, start_dt: datetime, e
             fetch_count=fetch_count,
         )
         frame = _normalize_history_frame(result, "index_code", normalized_code, freq)
+        if freq == "1d":
+            target = filter_frame_by_datetime_range(frame, "trade_time", start_dt, end_dt)
+            if target.empty:
+                return target
+            previous = frame[frame["trade_time"] < start_dt].tail(1)
+            return pd.concat([previous, target], ignore_index=True)
         return filter_frame_by_datetime_range(frame, "trade_time", start_dt, end_dt)
 
     return _call_mootdx("quotes.index", _fetch_from_server)
@@ -447,19 +453,33 @@ def get_stock_quotes(
 def get_index_quotes(index_codes: list[str], freq: str, trade_date: str, start_date: str, end_date: str, count: int | None) -> list[IndexQuoteItem]:
     start_dt, end_dt = _resolve_time_window(trade_date, start_date, end_date, "", "", count, False)
     items: list[IndexQuoteItem] = []
+    request_count = count + 1 if freq == "1d" and count else count
     for index_code in index_codes:
         normalized_code = normalize_index_code(index_code)
         cache_path = build_cache_path("mootdx", ["indexes", "quotes"], {"index_code": normalized_code, "freq": freq})
         cache_df = read_cache_frame(cache_path)
         filtered_cache = filter_frame_by_datetime_range(cache_df, "trade_time", start_dt, end_dt)
-        if filtered_cache.empty or (count and len(filtered_cache) < count):
+        missing_daily_context = False
+        if freq == "1d" and not filtered_cache.empty:
+            first_time = pd.to_datetime(filtered_cache["trade_time"]).min()
+            missing_daily_context = not (pd.to_datetime(cache_df["trade_time"]) < first_time).any()
+        if filtered_cache.empty or (count and len(filtered_cache) < count) or missing_daily_context:
             fetched_df = _fetch_index_history_frame(normalized_code, freq, start_dt, end_dt)
             if not fetched_df.empty:
                 cache_df = merge_cache_frame(cache_df, fetched_df, ["index_code", "trade_time", "freq"], ["trade_time"])
                 write_cache_frame(cache_path, cache_df)
         filtered_df = filter_frame_by_datetime_range(cache_df, "trade_time", start_dt, end_dt)
-        filtered_df = latest_n_rows(filtered_df, "trade_time", count)
-        items.extend(_frame_to_index_quotes(filtered_df, freq))
+        if freq == "1d" and not cache_df.empty:
+            previous = cache_df[pd.to_datetime(cache_df["trade_time"]) < start_dt]
+            previous = latest_n_rows(previous, "trade_time", 1)
+            filtered_df = merge_cache_frame(previous, filtered_df, ["index_code", "trade_time", "freq"], ["trade_time"])
+        filtered_df = latest_n_rows(filtered_df, "trade_time", request_count)
+        quote_items = _frame_to_index_quotes(filtered_df, freq)
+        if freq == "1d":
+            quote_items = [item for item in quote_items if start_dt.strftime("%Y-%m-%d") <= item.trade_time <= end_dt.strftime("%Y-%m-%d")]
+            if count:
+                quote_items = quote_items[-count:]
+        items.extend(quote_items)
     return items
 
 

@@ -1119,7 +1119,12 @@ def get_index_quotes(
         if filtered_df.empty:
             continue
         filtered_df["trade_time"] = pd.to_datetime(filtered_df["trade_time"])
-        agg_df = add_quote_metrics(aggregate_ohlc(filtered_df.rename(columns={"volume2": "volume"}), freq))
+        if freq == "1d":
+            # index_daily already carries the provider's native prior close
+            # and change metrics, including the first requested session.
+            agg_df = filtered_df.rename(columns={"volume2": "volume"}).sort_values("trade_time")
+        else:
+            agg_df = add_quote_metrics(aggregate_ohlc(filtered_df.rename(columns={"volume2": "volume"}), freq))
         if count:
             agg_df = agg_df.tail(count)
         for _, row in agg_df.iterrows():

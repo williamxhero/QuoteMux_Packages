@@ -431,7 +431,14 @@ def _fetch_index_daily_frame(index_code: str, freq: str, start_dt: datetime, end
     request_start_dt = start_dt
     if _is_single_day_window(request_start_dt, end_dt):
         request_start_dt = request_start_dt - timedelta(days=10)
-    work = work[(work["trade_time"] >= request_start_dt) & (work["trade_time"] <= end_dt)]
+    if freq == "1d":
+        # The endpoint returns history: keep its actual preceding session for
+        # daily metrics even when a holiday puts it outside a short lookback.
+        previous = work[work["trade_time"] < start_dt].sort_values("trade_time").tail(1)
+        target = work[(work["trade_time"] >= start_dt) & (work["trade_time"] <= end_dt)]
+        work = pd.concat([previous, target], ignore_index=True)
+    else:
+        work = work[(work["trade_time"] >= request_start_dt) & (work["trade_time"] <= end_dt)]
     work, _ = calibrate_quote_units(work)
     if freq == "1w":
         work = work.set_index("trade_time").resample("W-FRI", label="left", closed="left").agg({"index_code": "last", "freq": "last", "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum", "amount": "sum"}).reset_index()
@@ -585,13 +592,17 @@ def get_index_quotes(index_codes: list[str], freq: str, trade_date: str, start_d
         cache_path = build_cache_path("akshare", ["indexes", "quotes"], {"index_code": normalized_code, "freq": freq})
         cache_df = read_cache_frame(cache_path)
         filtered_cache = filter_frame_by_datetime_range(cache_df, "trade_time", start_dt, end_dt)
-        if filtered_cache.empty or (request_count and len(filtered_cache) < request_count):
+        missing_daily_context = False
+        if freq == "1d" and not filtered_cache.empty:
+            first_time = pd.to_datetime(filtered_cache["trade_time"]).min()
+            missing_daily_context = not (pd.to_datetime(cache_df["trade_time"]) < first_time).any()
+        if filtered_cache.empty or (request_count and len(filtered_cache) < request_count) or missing_daily_context:
             fetched_df = _fetch_index_daily_frame(normalized_code, freq, fetch_start_dt, fetch_end_dt)
             if not fetched_df.empty:
                 cache_df = merge_cache_frame(cache_df, fetched_df, ["index_code", "trade_time", "freq"], ["trade_time"])
                 write_cache_frame(cache_path, cache_df)
         filtered_df = filter_frame_by_datetime_range(cache_df, "trade_time", start_dt, end_dt)
-        if request_count and start_dt is not None and not cache_df.empty:
+        if (freq == "1d" or request_count) and start_dt is not None and not cache_df.empty:
             cache_times = pd.to_datetime(cache_df["trade_time"], errors="coerce")
             previous_df = cache_df[cache_times < start_dt]
             previous_df = latest_n_rows(previous_df, "trade_time", 1)
@@ -599,7 +610,9 @@ def get_index_quotes(index_codes: list[str], freq: str, trade_date: str, start_d
                 filtered_df = merge_cache_frame(previous_df, filtered_df, ["index_code", "trade_time", "freq"], ["trade_time"])
         filtered_df = latest_n_rows(filtered_df, "trade_time", request_count)
         quote_items = _frame_to_index_quotes(filtered_df, freq)
-        if _is_single_day_window(start_dt, end_dt):
+        if freq == "1d":
+            quote_items = [item for item in quote_items if start_dt.strftime("%Y-%m-%d") <= item.trade_time <= end_dt.strftime("%Y-%m-%d")]
+        elif _is_single_day_window(start_dt, end_dt):
             quote_items = [item for item in quote_items if item.trade_time == start_dt.strftime("%Y-%m-%d")]
         if count:
             quote_items = quote_items[-count:]
