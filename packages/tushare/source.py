@@ -733,31 +733,44 @@ def _stock_listing_board(code: str, exchange: str, provider_market: str) -> str:
 
 def get_adj_factor_snapshot(trade_date: str) -> list[AdjFactorItem]:
     """Return the provider-native full-market adjustment-factor snapshot."""
+    actual_date = _exact_daily_snapshot_date(trade_date)
     pro = get_ts_pro()
-    actual_date = format_date_value(trade_date)
-    if pro is None or actual_date == "":
+    if pro is None:
+        raise RuntimeError("Tushare adjustment-factor snapshot source is unavailable")
+    frame = call_tushare_api(
+        "adj_factor",
+        pro.adj_factor,
+        trade_date=actual_date.replace("-", ""),
+    )
+    if not isinstance(frame, pd.DataFrame):
+        raise RuntimeError("Tushare adjustment-factor snapshot response is not a DataFrame")
+    if len(frame.index) == 0:
         return []
-    try:
-        frame = call_tushare_api(
-            "adj_factor",
-            pro.adj_factor,
-            trade_date=actual_date.replace("-", ""),
-        )
-    except Exception:
-        return []
-    if frame is None or frame.empty or not {"ts_code", "trade_date", "adj_factor"}.issubset(frame.columns):
-        return []
+    if not frame.columns.is_unique:
+        raise RuntimeError("Tushare adjustment-factor snapshot response has duplicate columns")
+    missing_columns = [column for column in ("ts_code", "trade_date", "adj_factor") if column not in frame.columns]
+    if missing_columns:
+        raise RuntimeError("Tushare adjustment-factor snapshot response is missing columns: " + ", ".join(missing_columns))
     items: list[AdjFactorItem] = []
-    for _, row in frame.drop_duplicates(subset=["ts_code", "trade_date"], keep="last").iterrows():
-        code = normalize_stock_code(str(row["ts_code"]))
-        factor = pd.to_numeric(row["adj_factor"], errors="coerce")
-        if code == "" or pd.isna(factor) or float(factor) <= 0:
-            continue
+    seen_codes: set[str] = set()
+    for row in frame.to_dict("records"):
+        code = _canonical_snapshot_code(row["ts_code"])
+        if code is None or not code.startswith(("0", "3", "4", "6", "8", "920")):
+            raise RuntimeError(f"Tushare adjustment-factor snapshot has non-A-share identity: {row['ts_code']!r}")
+        row_date = _exact_daily_snapshot_date(row["trade_date"])
+        if row_date != actual_date:
+            raise RuntimeError(f"Tushare adjustment-factor snapshot returned {row_date} for requested {actual_date} ({code})")
+        if code in seen_codes:
+            raise RuntimeError(f"Tushare adjustment-factor snapshot returned duplicate identity: {code}")
+        factor = _snapshot_number(row["adj_factor"], "adj_factor", code)
+        if factor <= 0:
+            raise RuntimeError(f"Tushare adjustment-factor snapshot has non-positive adj_factor for {code}")
+        seen_codes.add(code)
         items.append(
             AdjFactorItem(
                 code=code,
-                trade_date=format_date_value(row["trade_date"]).replace("-", ""),
-                adj_factor=float(factor),
+                trade_date=row_date.replace("-", ""),
+                adj_factor=factor,
             )
         )
     return sorted(items, key=lambda item: (item.trade_date, item.code))
