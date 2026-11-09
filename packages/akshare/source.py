@@ -390,25 +390,42 @@ def _fetch_stock_intraday_frame(code: str, freq: str, start_dt: datetime, end_dt
 
 
 def _fetch_index_daily_frame(index_code: str, freq: str, start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
-    result = _call_ak(
-        "stock_zh_index_daily",
-        ak.stock_zh_index_daily,
-        symbol=build_akshare_index_symbol(index_code),
-    )
+    raw_index_code = str(index_code).strip().upper()
+    if "." in raw_index_code and raw_index_code.rsplit(".", 1)[-1] == "CSI":
+        symbol = f"sh{raw_index_code.split('.', 1)[0]}"
+    else:
+        symbol = build_akshare_index_symbol(index_code)
+    # Sina's legacy endpoint stops returning recent CSI rows for some
+    # indexes. Tencent's endpoint is the native AKShare route that keeps
+    # 000985 (CSI All Share) current; retain the legacy call as a bounded
+    # fallback for exchanges it still covers.
+    result = pd.DataFrame()
+    tx_fetcher = getattr(ak, "stock_zh_index_daily_tx", None)
+    if tx_fetcher is not None:
+        try:
+            result = _call_ak("stock_zh_index_daily_tx", tx_fetcher, symbol=symbol)
+        except Exception:
+            result = pd.DataFrame()
+    if result is None or result.empty:
+        result = _call_ak("stock_zh_index_daily", ak.stock_zh_index_daily, symbol=symbol)
     if result is None or result.empty:
         return pd.DataFrame()
     work = result.copy()
     work["index_code"] = normalize_index_code(index_code)
-    work["trade_time"] = pd.to_datetime(work["date"], errors="coerce")
+    date_column = next((name for name in ("date", "日期", "时间") if name in work.columns), "date")
+    work["trade_time"] = pd.to_datetime(work[date_column], errors="coerce")
     work["freq"] = freq
-    work["open"] = pd.to_numeric(work["open"], errors="coerce")
-    work["high"] = pd.to_numeric(work["high"], errors="coerce")
-    work["low"] = pd.to_numeric(work["low"], errors="coerce")
-    work["close"] = pd.to_numeric(work["close"], errors="coerce")
-    if "volume" not in work.columns:
-        work["volume"] = pd.NA
-    work["volume"] = pd.to_numeric(work["volume"], errors="coerce")
-    work["amount"] = pd.NA
+    column_aliases = {
+        "open": ("open", "开盘"),
+        "high": ("high", "最高"),
+        "low": ("low", "最低"),
+        "close": ("close", "收盘"),
+        "volume": ("volume", "成交量"),
+        "amount": ("amount", "成交额"),
+    }
+    for target, aliases in column_aliases.items():
+        source_column = next((name for name in aliases if name in work.columns), None)
+        work[target] = pd.to_numeric(work[source_column], errors="coerce") if source_column else pd.NA
     work = work[["index_code", "trade_time", "freq", "open", "high", "low", "close", "volume", "amount"]]
     work = work.dropna(subset=["trade_time"])
     request_start_dt = start_dt
