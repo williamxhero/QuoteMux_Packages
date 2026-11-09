@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
-from time import monotonic
+from time import monotonic, sleep
 from uuid import uuid4
 
 from quotemux_packages.exchange_official.contracts import (
@@ -113,6 +113,7 @@ class _Attempt:
         self.started = datetime.now(UTC).isoformat()
         self.receipts: list[PageReceipt] = []
         self.byte_count = 0
+        self.last_request_started_at: float | None = None
         self.artifact_dir: Path | None = None
         if output_dir is not None:
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -131,11 +132,17 @@ class _Attempt:
         return seconds
 
     def fetch(self, partition: _Partition, page: int, purpose: str = "page") -> _Page:
-        remaining = self.remaining()
+        self.remaining()
         if len(self.receipts) >= self.limits.max_total_pages:
             raise ExchangeCaptureError("limit_error", "total page request limit exceeded")
         request = partition.request(page, self.limits.requested_page_size)
+        self._wait_for_request_interval()
         started = datetime.now(UTC).isoformat()
+        dispatch_at = monotonic()
+        remaining = self.deadline - dispatch_at
+        if remaining <= 0:
+            raise ExchangeCaptureError("timeout_error", "total monotonic capture deadline exceeded before dispatch")
+        self.last_request_started_at = dispatch_at
         response = self.transport(request, connect_timeout=min(self.limits.connect_timeout, remaining),
                                   request_timeout=min(self.limits.request_timeout, remaining),
                                   max_bytes=self.limits.max_response_bytes, deadline_monotonic=self.deadline)
@@ -157,6 +164,25 @@ class _Attempt:
                                     schema_sha256=parsed.schema_sha256, selected_page_sha256=parsed.selected_sha256)
         self.remaining()
         return parsed
+
+    def _wait_for_request_interval(self) -> None:
+        if self.last_request_started_at is None:
+            self.remaining()
+            return
+        target = self.last_request_started_at + self.limits.min_request_interval_seconds
+        if target >= self.deadline:
+            raise ExchangeCaptureError("timeout_error", "insufficient total capture budget for the required request interval")
+        while True:
+            remaining = self.remaining()
+            delay = target - monotonic()
+            if delay <= 0:
+                return
+            if delay >= remaining:
+                raise ExchangeCaptureError("timeout_error", "insufficient total capture budget for the required request interval")
+            # The interval is capped at10s. Check the same total deadline before
+            # and after every small wait, including early wakes/OS oversleep.
+            sleep(min(delay, 1.0))
+            self.remaining()
 
     def finish_manifest(self, payload: dict[str, object]) -> None:
         if self.artifact_dir is not None:
@@ -224,6 +250,7 @@ def _capture(exchanges: tuple[str, ...], limits: CaptureLimits, output_dir: Path
             attempt.finish_manifest({"result": "failed", "provider": PROVIDER, "contract_version": CONTRACT_VERSION,
                                      "scope": {"exchanges": list(exchanges)}, "kind": error.kind, "error": str(error),
                                      "transport_mode": "direct_official_https" if transport is None else "caller_supplied_transport",
+                                     "limits": asdict(limits),
                                      "capture_started_at_utc": attempt.started,
                                      "capture_completed_at_utc": datetime.now(UTC).isoformat(), "pages": pages})
         if error is exc:

@@ -18,6 +18,10 @@ pagination with stable actual metadata and unique identities. All selected first
 pages are read again after the partition scans. This proves a bounded paged
 observation, not an atomic source snapshot. Limits bound pages (including
 verification), response bytes, socket/request time and total monotonic budget.
+`min_request_interval_seconds` defaults to1.0 and must be finite in[1,10]; it
+cannot be disabled. It spaces every transport start, including verification
+pages, within the same monotonic total deadline. Waiting uses at most1s steps;
+insufficient budget fails before another transport call. No retry is added.
 Status/header/chunk/trailer reads recheck the deadline inside framing loops.
 OS DNS resolution runs in a daemon with a bounded caller wait because getaddrinfo
 does not honor socket timeouts; an abandoned DNS lookup can finish later but

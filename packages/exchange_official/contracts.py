@@ -46,6 +46,7 @@ class CaptureLimits:
     max_response_bytes: int = 2 * 1024 * 1024
     max_total_response_bytes: int = 64 * 1024 * 1024
     verify_first_page: bool = True
+    min_request_interval_seconds: float = 1.0
 
     def validate(self) -> None:
         for name, upper in (
@@ -64,6 +65,10 @@ class CaptureLimits:
                 raise ExchangeCaptureError("contract_error", f"invalid {name}: require finite seconds in (0,{upper}]")
         if self.verify_first_page is not True:
             raise ExchangeCaptureError("contract_error", "first-page verification cannot be disabled")
+        interval = self.min_request_interval_seconds
+        if (isinstance(interval, bool) or not isinstance(interval, (int, float))
+                or not math.isfinite(interval) or not 1 <= interval <= 10):
+            raise ExchangeCaptureError("contract_error", "min_request_interval_seconds must be finite seconds in [1,10]")
 
 
 @dataclass(frozen=True)
