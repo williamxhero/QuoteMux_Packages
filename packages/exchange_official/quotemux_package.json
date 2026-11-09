@@ -1,0 +1,15 @@
+{
+  "package_id": "exchange_official",
+  "version": "0.1.0",
+  "source_name": "exchange_official",
+  "display_name": "Official exchange lifecycle observations",
+  "description": "Direct explicitly scoped SHSE/SZSE L/P/D capture. BJSE and global scope fail closed. This provider-only phase does not advertise stocks.catalog or publish authority.",
+  "capabilities": [],
+  "capability_tags": ["stocks", "official", "lifecycle"],
+  "config_schema": [],
+  "secret_fields": [],
+  "supports_multi_instance": false,
+  "handler_targets": {
+    "capture_stock_authority": "quotemux_packages.exchange_official:capture_stock_authority"
+  }
+}
