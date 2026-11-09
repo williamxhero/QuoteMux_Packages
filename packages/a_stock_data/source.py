@@ -50,6 +50,9 @@ def normalize_stock_code(value: object) -> str:
 
 
 def _market_for_code(code: str) -> str | None:
+    # Beijing's 899 namespace contains indices, not A-share stock identities.
+    if code.startswith("899"):
+        return None
     if code.startswith(("4", "8", "920")):
         return "bj"
     if code[0] == "6" or code == "888880":
