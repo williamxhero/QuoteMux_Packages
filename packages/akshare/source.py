@@ -400,10 +400,23 @@ def _fetch_index_daily_frame(index_code: str, freq: str, start_dt: datetime, end
     # 000985 (CSI All Share) current; retain the legacy call as a bounded
     # fallback for exchanges it still covers.
     result = pd.DataFrame()
+    tx_fetcher = getattr(ak, "index_zh_daily_tx", None)
+    if tx_fetcher is not None:
+        try:
+            result = _call_ak(
+                "index_zh_daily_tx",
+                tx_fetcher,
+                symbol=symbol,
+                start_date=start_dt.strftime("%Y%m%d"),
+                end_date=end_dt.strftime("%Y%m%d"),
+            )
+        except Exception:
+            result = pd.DataFrame()
     tx_fetcher = getattr(ak, "stock_zh_index_daily_tx", None)
     if tx_fetcher is not None:
         try:
-            result = _call_ak("stock_zh_index_daily_tx", tx_fetcher, symbol=symbol)
+            if result is None or result.empty:
+                result = _call_ak("stock_zh_index_daily_tx", tx_fetcher, symbol=symbol)
         except Exception:
             result = pd.DataFrame()
     if result is None or result.empty:
