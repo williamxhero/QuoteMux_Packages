@@ -407,7 +407,19 @@ def _fetch_index_daily_frame(index_code: str, freq: str, start_dt: datetime, end
         except Exception:
             result = pd.DataFrame()
     if result is None or result.empty:
-        result = _call_ak("stock_zh_index_daily", ak.stock_zh_index_daily, symbol=symbol)
+        legacy_fetcher = getattr(ak, "stock_zh_index_daily", None)
+        if legacy_fetcher is not None:
+            try:
+                result = _call_ak("stock_zh_index_daily", legacy_fetcher, symbol=symbol)
+            except Exception:
+                result = pd.DataFrame()
+    if result is None or result.empty:
+        renamed_fetcher = getattr(ak, "index_zh_daily_sina", None)
+        if renamed_fetcher is not None:
+            try:
+                result = _call_ak("index_zh_daily_sina", renamed_fetcher, symbol=symbol)
+            except Exception:
+                result = pd.DataFrame()
     if result is None or result.empty:
         return pd.DataFrame()
     work = result.copy()
