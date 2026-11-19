@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
-from time import monotonic, sleep
+from time import monotonic, perf_counter, sleep
 from uuid import uuid4
 
 from quotemux_packages.exchange_official.contracts import (
@@ -109,53 +109,94 @@ def capture_stock_authority(exchanges: tuple[str, ...], *, limits: CaptureLimits
 class _Attempt:
     def __init__(self, limits: CaptureLimits, output_dir: Path | None, transport: HttpTransport | None) -> None:
         self.limits = limits
-        self.deadline = monotonic() + limits.total_timeout
-        self.started = datetime.now(UTC).isoformat()
+        self._last_monotonic = monotonic()
+        self.deadline = self._last_monotonic + limits.total_timeout
+        self._last_elapsed = perf_counter()
+        self._elapsed_deadline = self._last_elapsed + limits.total_timeout
+        self._started_utc = self._last_utc = datetime.now(UTC)
+        self.started = self._started_utc.isoformat()
         self.receipts: list[PageReceipt] = []
         self.byte_count = 0
-        self.last_request_started_at: float | None = None
+        self._last_response_elapsed: float | None = None
+        self._last_request_utc: datetime | None = None
         self.artifact_dir: Path | None = None
         if output_dir is not None:
             output_dir.mkdir(parents=True, exist_ok=True)
             self.artifact_dir = output_dir / (datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid4().hex)
             self.artifact_dir.mkdir(mode=0o700)
             (self.artifact_dir / "raw").mkdir(mode=0o700)
-        if transport is None:
-            from quotemux_packages.exchange_official.http import get_response
-            transport = get_response
         self.transport = transport
 
-    def remaining(self) -> float:
-        seconds = self.deadline - monotonic()
+    def remaining(self, sample: tuple[float, float] | None = None) -> float:
+        current, elapsed = (monotonic(), perf_counter()) if sample is None else sample
+        if current < self._last_monotonic or elapsed < self._last_elapsed:
+            raise ExchangeCaptureError("timeout_error", "capture elapsed clock moved backwards")
+        self._last_monotonic, self._last_elapsed = current, elapsed
+        seconds = min(self.deadline - current, self._elapsed_deadline - elapsed)
         if seconds <= 0:
-            raise ExchangeCaptureError("timeout_error", "total monotonic capture deadline exceeded")
+            raise ExchangeCaptureError("timeout_error", "total capture deadline exceeded")
         return seconds
+
+    def _utc_now(self, current: datetime | None = None) -> datetime:
+        current = datetime.now(UTC) if current is None else current
+        if current < self._last_utc or (current - self._started_utc).total_seconds() > self.limits.total_timeout:
+            raise ExchangeCaptureError("timeout_error", "capture UTC clock moved backwards or exceeded total budget")
+        self._last_utc = current
+        return current
 
     def fetch(self, partition: _Partition, page: int, purpose: str = "page") -> _Page:
         self.remaining()
         if len(self.receipts) >= self.limits.max_total_pages:
             raise ExchangeCaptureError("limit_error", "total page request limit exceeded")
         request = partition.request(page, self.limits.requested_page_size)
-        self._wait_for_request_interval()
-        started = datetime.now(UTC).isoformat()
-        dispatch_at = monotonic()
-        remaining = self.deadline - dispatch_at
-        if remaining <= 0:
-            raise ExchangeCaptureError("timeout_error", "total monotonic capture deadline exceeded before dispatch")
-        self.last_request_started_at = dispatch_at
-        response = self.transport(request, connect_timeout=min(self.limits.connect_timeout, remaining),
-                                  request_timeout=min(self.limits.request_timeout, remaining),
-                                  max_bytes=self.limits.max_response_bytes, deadline_monotonic=self.deadline)
-        completed = datetime.now(UTC).isoformat()
+        started_utc = self._wait_for_request_interval()
+        started = started_utc.isoformat()
+        remaining = self.remaining()
+        connect_timeout = min(self.limits.connect_timeout, remaining)
+        request_timeout = min(self.limits.request_timeout, remaining)
+        request_elapsed_deadline = self._last_elapsed + request_timeout
+        self._last_request_utc = started_utc
+        response_timeout: ExchangeCaptureError | None = None
+        if self.transport is None:
+            from quotemux_packages.exchange_official.http import _CompletedResponseTimeout
+
+            try:
+                response = self._fetch_https(request, request_elapsed_deadline, request_timeout, connect_timeout)
+            except _CompletedResponseTimeout as exc:
+                response_timeout = exc
+                response = exc.response
+        else:
+            response = self.transport(request, connect_timeout=connect_timeout, request_timeout=request_timeout,
+                                      max_bytes=self.limits.max_response_bytes, deadline_monotonic=self.deadline)
+        # A post-response anchor is conservative even if dispatch was descheduled
+        # after its clock sample; never infer actual dispatch from a coarse tick.
+        response_sample = monotonic(), perf_counter()
+        completed_utc = datetime.now(UTC)
+        completed = completed_utc.isoformat()
         if not isinstance(response, HttpResponse) or not isinstance(response.body, bytes):
             raise ExchangeCaptureError("transport_error", "transport must return HttpResponse with original bytes")
+        byte_count = self.byte_count + len(response.body)
+        over_limit = (len(response.body) > self.limits.max_response_bytes
+                      or byte_count > self.limits.max_total_response_bytes)
+        if response_timeout is not None and over_limit:
+            # Do not turn over-budget native bytes into a failure receipt.
+            raise response_timeout
         receipt = PageReceipt(partition.key, purpose, request, started, completed, response)
         self.receipts.append(receipt)
-        self.byte_count += len(response.body)
-        if len(response.body) > self.limits.max_response_bytes or self.byte_count > self.limits.max_total_response_bytes:
+        self.byte_count = byte_count
+        if over_limit:
             raise ExchangeCaptureError("limit_error", "capture response byte limit exceeded")
         if self.artifact_dir is not None:
             _write_bytes(self.artifact_dir / "raw" / f"{len(self.receipts):04d}.raw", response.body)
+        if response_timeout is not None:
+            raise response_timeout
+        self.remaining(response_sample)
+        if response_sample[1] > request_elapsed_deadline:
+            raise ExchangeCaptureError("timeout_error", "request elapsed time exceeded request budget")
+        self._last_response_elapsed = response_sample[1]
+        self._utc_now(completed_utc)
+        if (completed_utc - started_utc).total_seconds() > self.limits.request_timeout:
+            raise ExchangeCaptureError("timeout_error", "request UTC observation exceeded request budget")
         self.remaining()
         if isinstance(response.status, bool) or response.status != 200:
             raise ExchangeCaptureError("transport_error", f"official exchange returned HTTP {response.status}")
@@ -165,29 +206,67 @@ class _Attempt:
         self.remaining()
         return parsed
 
-    def _wait_for_request_interval(self) -> None:
-        if self.last_request_started_at is None:
-            self.remaining()
-            return
-        target = self.last_request_started_at + self.limits.min_request_interval_seconds
-        if target >= self.deadline:
-            raise ExchangeCaptureError("timeout_error", "insufficient total capture budget for the required request interval")
-        while True:
+    def _fetch_https(self, request: HttpRequest, request_elapsed_deadline: float,
+                     request_timeout: float, connect_timeout: float) -> HttpResponse:
+        # Fix both budgets at the dispatch sample, not at HTTPS entry. Each
+        # guard validates the same clock readings it uses to compute time left.
+        request_monotonic_deadline = self._last_monotonic + request_timeout
+        connect_monotonic_deadline = self._last_monotonic + connect_timeout
+        connect_elapsed_deadline = self._last_elapsed + connect_timeout
+        from quotemux_packages.exchange_official.http import _get_response
+
+        def remaining() -> float:
+            seconds = min(self.remaining(), request_elapsed_deadline - self._last_elapsed,
+                          request_monotonic_deadline - self._last_monotonic)
+            if seconds <= 0:
+                raise ExchangeCaptureError("timeout_error", "official exchange HTTP deadline exceeded")
+            return seconds
+
+        def connect_remaining() -> float:
+            seconds = min(remaining(), connect_elapsed_deadline - self._last_elapsed,
+                          connect_monotonic_deadline - self._last_monotonic)
+            if seconds <= 0:
+                raise ExchangeCaptureError("timeout_error", "official exchange connect deadline exceeded")
+            return seconds
+
+        # Freeze the worker's bounds; it must not call the caller's stateful
+        # remaining() or mutate its rollback observations.
+        dns_monotonic_floor, dns_elapsed_floor = self._last_monotonic, self._last_elapsed
+        dns_monotonic_cutoff = min(self.deadline, request_monotonic_deadline, connect_monotonic_deadline)
+        dns_elapsed_cutoff = min(self._elapsed_deadline, request_elapsed_deadline, connect_elapsed_deadline)
+
+        def dns_allowed() -> bool:
+            return (dns_monotonic_floor <= monotonic() < dns_monotonic_cutoff
+                    and dns_elapsed_floor <= perf_counter() < dns_elapsed_cutoff)
+
+        return _get_response(request, max_bytes=self.limits.max_response_bytes,
+                             remaining=remaining, connect_remaining=connect_remaining, dns_allowed=dns_allowed)
+
+    def _wait_for_request_interval(self) -> datetime:
+        # Bound wakeups as well as elapsed time: broken/frozen clocks or repeated
+        # early wakes must fail closed rather than spin forever.
+        for _ in range(128):
             remaining = self.remaining()
-            delay = target - monotonic()
+            current_utc = self._utc_now()
+            if self._last_response_elapsed is None:
+                return current_utc
+            interval = self.limits.min_request_interval_seconds
+            delay = max(interval - (self._last_elapsed - self._last_response_elapsed),
+                        interval - (current_utc - self._last_request_utc).total_seconds())
             if delay <= 0:
-                return
+                return current_utc
             if delay >= remaining:
                 raise ExchangeCaptureError("timeout_error", "insufficient total capture budget for the required request interval")
-            # The interval is capped at10s. Check the same total deadline before
-            # and after every small wait, including early wakes/OS oversleep.
             sleep(min(delay, 1.0))
-            self.remaining()
+        raise ExchangeCaptureError("timeout_error", "request interval wait did not converge")
 
-    def finish_manifest(self, payload: dict[str, object]) -> None:
+    def finish_manifest(self, payload: dict[str, object], *, successful: bool) -> None:
         if self.artifact_dir is not None:
             body = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False).encode("utf-8") + b"\n"
-            _write_bytes(self.artifact_dir / "manifest.json", body)
+            path = self.artifact_dir / "manifest.json"
+            if successful:
+                self.remaining()
+            _write_bytes(path, body)
 
 
 def _write_bytes(path: Path, data: bytes) -> None:
@@ -219,7 +298,9 @@ def _capture(exchanges: tuple[str, ...], limits: CaptureLimits, output_dir: Path
                                              canonical_sha256([item.to_payload() for item in current.rows]), tuple(current.rejected_rows))
                            for current in captured)
         attempt.remaining()
-        result = ExchangeAuthorityCapture(exchanges, attempt.started, datetime.now(UTC).isoformat(),
+        completed_at = attempt._utc_now().isoformat()
+        attempt.remaining()
+        result = ExchangeAuthorityCapture(exchanges, attempt.started, completed_at,
                                           partitions, items, overlaps, str(attempt.artifact_dir or ""), limits,
                                           "direct_official_https" if transport is None else "caller_supplied_transport")
         if attempt.artifact_dir is not None:
@@ -233,7 +314,7 @@ def _capture(exchanges: tuple[str, ...], limits: CaptureLimits, output_dir: Path
                     page_payload.pop("raw_base64")
                     page_payload["raw_file"] = f"raw/{raw_index[id(receipt)]:04d}.raw"
             manifest["manifest_sha256"] = canonical_sha256(manifest)
-            attempt.finish_manifest(manifest)
+            attempt.finish_manifest(manifest, successful=True)
         return result
     except Exception as exc:
         error = exc if isinstance(exc, ExchangeCaptureError) else ExchangeCaptureError("capture_error", f"official exchange capture failed: {exc}")
@@ -252,7 +333,8 @@ def _capture(exchanges: tuple[str, ...], limits: CaptureLimits, output_dir: Path
                                      "transport_mode": "direct_official_https" if transport is None else "caller_supplied_transport",
                                      "limits": asdict(limits),
                                      "capture_started_at_utc": attempt.started,
-                                     "capture_completed_at_utc": datetime.now(UTC).isoformat(), "pages": pages})
+                                     "capture_completed_at_utc": datetime.now(UTC).isoformat(), "pages": pages},
+                                    successful=False)
         if error is exc:
             raise
         raise error from exc

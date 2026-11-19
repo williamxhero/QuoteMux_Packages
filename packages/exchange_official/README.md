@@ -17,15 +17,33 @@ installation or implicit disk output. Each requested market must complete L/P/D
 pagination with stable actual metadata and unique identities. All selected first
 pages are read again after the partition scans. This proves a bounded paged
 observation, not an atomic source snapshot. Limits bound pages (including
-verification), response bytes, socket/request time and total monotonic budget.
-`min_request_interval_seconds` defaults to1.0 and must be finite in[1,10]; it
-cannot be disabled. It spaces every transport start, including verification
-pages, within the same monotonic total deadline. Waiting uses at most1s steps;
-insufficient budget fails before another transport call. No retry is added.
-Status/header/chunk/trailer reads recheck the deadline inside framing loops.
-OS DNS resolution runs in a daemon with a bounded caller wait because getaddrinfo
-does not honor socket timeouts; an abandoned DNS lookup can finish later but
-cannot initiate TCP/HTTPS. Connect attempts and TLS remain on the guarded caller.
+verification), response bytes, connection and request time, and total capture
+time. `min_request_interval_seconds` defaults to 1.0 and must be finite in
+[1, 10]; it cannot be disabled. Before starting any later request, including
+verification, capture waits for the full interval both from the previous
+response's high-resolution elapsed sample and between the original UTC receipt
+starts. Waiting uses steps of at most 1 s. Clock rollback or insufficient budget
+fails the attempt; no tolerance or retry is added.
+
+The default HTTPS transport uses the capture's absolute budget from before
+transport entry. DNS, TCP connect and TLS share the connection budget, capped
+by the request and total deadlines. Sending and receiving use the remaining
+request and total budgets; status/header/chunk/trailer reads check them inside
+framing loops. OS DNS runs in a daemon with a bounded caller wait because
+`getaddrinfo` does not honor socket timeouts. The worker checks its absolute
+cutoff before starting resolution. An already-started lookup may finish after
+the caller abandons it, but cannot initiate TCP/HTTPS. A caller-supplied
+transport still receives `connect_timeout`, `request_timeout`, `max_bytes` and
+`deadline_monotonic` and controls its own in-flight I/O.
+
+A late response fails capture. The default HTTPS path requires complete framing
+before handing off a response, including CRLF after each data chunk and a
+terminating blank line after the trailers. A late response's receipt and original
+body are retained only if framing completed and the body fits the artifact limits.
+Capture checks elapsed time after the final UTC sample and, when writing a success
+manifest, after serialization and before starting the write. A deadline failure
+can still write a failure manifest. These checks do not forcibly interrupt
+callbacks, filesystem operations (including fsync), or OS scheduling.
 
 `result.to_payload()` is JSON serializable:
 
